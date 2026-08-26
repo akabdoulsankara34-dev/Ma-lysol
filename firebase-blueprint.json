@@ -1,0 +1,150 @@
+{
+  "entities": {
+    "businesses": {
+      "title": "Business",
+      "description": "PME or store profile registered in BizPilot Burkina",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Commercial name of the store" },
+        "accessCode": { "type": "string", "description": "Unique enterprise access code e.g. BF-SONG-2026" },
+        "ownerId": { "type": "string", "description": "User ID of the owner" },
+        "ownerName": { "type": "string", "description": "Name of the business owner" },
+        "phone": { "type": "string", "description": "Store contact phone" },
+        "city": { "type": "string", "description": "City e.g. Ouagadougou, Bobo-Dioulasso" },
+        "sector": { "type": "string", "description": "Business activity sector" },
+        "ifu": { "type": "string", "description": "IFU tax number if available" },
+        "currency": { "type": "string", "description": "Default currency e.g. FCFA" },
+        "receiptFooter": { "type": "string", "description": "Custom message on receipts" },
+        "status": { "type": "string", "description": "active or suspended" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "accessCode", "ownerId", "currency"]
+    },
+    "products": {
+      "title": "Product",
+      "description": "Stock inventory and sales item",
+      "type": "object",
+      "properties": {
+        "businessId": { "type": "string" },
+        "name": { "type": "string" },
+        "sku": { "type": "string" },
+        "category": { "type": "string" },
+        "unit": { "type": "string" },
+        "purchasePrice": { "type": "number" },
+        "salePrice": { "type": "number" },
+        "currentStock": { "type": "number" },
+        "alertThreshold": { "type": "number" },
+        "supplier": { "type": "string" },
+        "archived": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["businessId", "name", "salePrice", "currentStock"]
+    },
+    "sales": {
+      "title": "Sale",
+      "description": "Completed or credit point-of-sale transaction",
+      "type": "object",
+      "properties": {
+        "businessId": { "type": "string" },
+        "receiptNumber": { "type": "string" },
+        "sellerId": { "type": "string" },
+        "sellerName": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "items": { "type": "array" },
+        "subtotal": { "type": "number" },
+        "discount": { "type": "number" },
+        "total": { "type": "number" },
+        "totalCost": { "type": "number" },
+        "profit": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "paymentBreakdown": { "type": "object" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["businessId", "receiptNumber", "total", "paymentMethod", "items"]
+    },
+    "stock_movements": {
+      "title": "StockMovement",
+      "description": "Detailed log of every inventory addition, deduction, or loss",
+      "type": "object",
+      "properties": {
+        "businessId": { "type": "string" },
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "type": { "type": "string" },
+        "quantity": { "type": "number" },
+        "previousStock": { "type": "number" },
+        "newStock": { "type": "number" },
+        "reason": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["businessId", "productId", "type", "quantity"]
+    },
+    "customers": {
+      "title": "Customer",
+      "description": "Customer record with debt/credit tracking",
+      "type": "object",
+      "properties": {
+        "businessId": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "totalDebt": { "type": "number" },
+        "dueDate": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["businessId", "name", "phone"]
+    },
+    "customer_payments": {
+      "title": "CustomerPayment",
+      "description": "Reimbursement of credit/debt by a customer",
+      "type": "object",
+      "properties": {
+        "businessId": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "amount": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "recordedBy": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["businessId", "customerId", "amount", "paymentMethod"]
+    },
+    "expenses": {
+      "title": "Expense",
+      "description": "Store operational expenses",
+      "type": "object",
+      "properties": {
+        "businessId": { "type": "string" },
+        "category": { "type": "string" },
+        "amount": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "beneficiary": { "type": "string" },
+        "recordedBy": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["businessId", "category", "amount", "paymentMethod"]
+    },
+    "users": {
+      "title": "User",
+      "description": "User profile and permissions",
+      "type": "object",
+      "properties": {
+        "businessId": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string" },
+        "pin": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "phone", "role"]
+    }
+  }
+}

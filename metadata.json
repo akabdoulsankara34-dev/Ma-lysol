@@ -1,0 +1,6 @@
+{
+  "name": "BizPilot Burkina",
+  "description": "SaaS de gestion des ventes, stocks, crédits clients, dépenses et trésorerie pour PME burkinabè",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
