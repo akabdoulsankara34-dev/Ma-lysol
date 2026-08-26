@@ -1,18 +1,71 @@
 {
   "name": "BizPilot Burkina - Caisse & Gestion Commerciale",
   "short_name": "BizPilot BF",
-  "description": "SaaS de gestion des ventes, caisse, stocks, crédits clients et impression thermique BLE pour PME burkinabè",
+  "description": "Logiciel de gestion de point de vente, stocks, caisse, crédits clients et facturation avec mode hors-ligne pour commerces au Burkina Faso.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "display_override": [
+    "window-controls-overlay",
+    "standalone",
+    "minimal-ui"
+  ],
   "background_color": "#0f172a",
   "theme_color": "#2563eb",
-  "orientation": "portrait-primary",
+  "orientation": "any",
+  "lang": "fr-BF",
+  "dir": "ltr",
+  "prefer_related_applications": false,
+  "categories": [
+    "business",
+    "finance",
+    "productivity",
+    "shopping"
+  ],
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='128' fill='%232563eb'/><path d='M160 144h192v224H160z' fill='%23ffffff'/><circle cx='256' cy='256' r='48' fill='%232563eb'/></svg>",
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='128' fill='%232563eb'/%3E%3Cpath d='M160 144h192v224H160z' fill='%23ffffff'/%3E%3Ccircle cx='256' cy='256' r='48' fill='%232563eb'/%3E%3Cpath d='M192 192h128v16H192zm0 112h128v16H192z' fill='%232563eb'/%3E%3C/svg%3E",
       "sizes": "192x192 512x512",
       "type": "image/svg+xml",
       "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Point de Vente (Caisse)",
+      "short_name": "Caisse",
+      "description": "Ouvrir la caisse et enregistrer des ventes",
+      "url": "/?tab=pos",
+      "icons": [
+        {
+          "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='24' fill='%232563eb'/%3E%3Cpath d='M28 32h40v32H28z' fill='%23fff'/%3E%3C/svg%3E",
+          "sizes": "96x96"
+        }
+      ]
+    },
+    {
+      "name": "Gestion des Stocks",
+      "short_name": "Stocks",
+      "description": "Consulter les niveaux de stock et réapprovisionner",
+      "url": "/?tab=stock",
+      "icons": [
+        {
+          "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='24' fill='%2310b981'/%3E%3Cpath d='M28 32h40v32H28z' fill='%23fff'/%3E%3C/svg%3E",
+          "sizes": "96x96"
+        }
+      ]
+    },
+    {
+      "name": "Session de Caisse",
+      "short_name": "Caisse",
+      "description": "Ouvrir ou clôturer la session de caisse",
+      "url": "/?tab=cash_register",
+      "icons": [
+        {
+          "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='24' fill='%23f59e0b'/%3E%3Cpath d='M28 32h40v32H28z' fill='%23fff'/%3E%3C/svg%3E",
+          "sizes": "96x96"
+        }
+      ]
     }
   ]
 }

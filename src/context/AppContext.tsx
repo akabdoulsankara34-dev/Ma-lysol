@@ -21,7 +21,8 @@ import {
   Quotation,
   QuotationItem,
   Invoice,
-  InvoiceItem
+  InvoiceItem,
+  QueuedMutation
 } from '../types';
 import { 
   initialBusinesses,
@@ -213,6 +214,9 @@ interface AppContextType {
   isSyncing: boolean;
   lastSyncedAt: Date | null;
   forceSyncCloudData: () => Promise<void>;
+  pendingSyncCount: number;
+  offlineQueue: QueuedMutation[];
+  processOfflineQueue: () => Promise<void>;
   notifications: NotificationItem[];
   summary: BusinessSummary;
   markNotificationAsRead: (id: string) => void;
@@ -223,6 +227,7 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 const LOCAL_STORAGE_KEY = 'bizpilot_burkina_v2';
+const OFFLINE_QUEUE_KEY = 'bizpilot_burkina_offline_queue_v1';
 const PLATFORM_ADMIN_PIN = '761278';
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -287,7 +292,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [quotations, setQuotations] = useState<Quotation[]>(
     initialCached?.quotations || initialQuotations
   );
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>(
+    initialCached?.invoices || []
+  );
+
+  // Offline Mutations Outbox Queue
+  const [offlineQueue, setOfflineQueue] = useState<QueuedMutation[]>(() => {
+    try {
+      const savedQueue = localStorage.getItem(OFFLINE_QUEUE_KEY);
+      return savedQueue ? JSON.parse(savedQueue) : [];
+    } catch {
+      return [];
+    }
+  });
 
   const [cart, setCart] = useState<CartItem[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -657,7 +674,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       expenses,
       stockMovements,
       cashSessions,
-      quotations
+      quotations,
+      invoices
     };
     try {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(dataToSave));
@@ -677,21 +695,149 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     expenses, 
     stockMovements,
     cashSessions,
-    quotations
+    quotations,
+    invoices
   ]);
 
-  // Online / Offline monitor
+  // Persist offline queue to localStorage
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
+    try {
+      localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(offlineQueue));
+    } catch (err) {
+      console.warn('Could not persist offline queue:', err);
+    }
+  }, [offlineQueue]);
+
+  // Helper to perform cloud write or queue offline
+  const syncMutation = useCallback(async (
+    collectionName: string,
+    docId: string,
+    action: 'set' | 'update' | 'delete',
+    payload?: any,
+    description?: string
+  ) => {
+    if (navigator.onLine) {
+      try {
+        if (action === 'set') {
+          await setDoc(doc(db, collectionName, docId), sanitizeForFirestore(payload));
+        } else if (action === 'update') {
+          await updateDoc(doc(db, collectionName, docId), sanitizeForFirestore(payload));
+        } else if (action === 'delete') {
+          await deleteDoc(doc(db, collectionName, docId));
+        }
+        return;
+      } catch (err) {
+        console.warn(`[Sync] Direct cloud write failed for ${collectionName}/${docId}, queueing mutation:`, err);
+      }
+    }
+
+    // If offline or if direct write threw, save to offline outbox queue
+    const mutationItem: QueuedMutation = {
+      id: `queue_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      collection: collectionName,
+      docId,
+      action,
+      payload,
+      timestamp: new Date().toISOString(),
+      description: description || `${action.toUpperCase()} sur ${collectionName}/${docId}`,
+      retryCount: 0,
+    };
+
+    setOfflineQueue(prev => {
+      const filtered = prev.filter(m => !(m.collection === collectionName && m.docId === docId && m.action === action));
+      const nextQueue = [...filtered, mutationItem];
+      return nextQueue;
+    });
+  }, []);
+
+  // Process pending offline mutations
+  const processOfflineQueue = useCallback(async () => {
+    if (!navigator.onLine) return;
+    const currentQueue = [...offlineQueue];
+    if (currentQueue.length === 0) return;
+
+    setIsSyncing(true);
+    const remaining: QueuedMutation[] = [];
+    let successfulCount = 0;
+
+    for (const item of currentQueue) {
+      try {
+        if (item.action === 'set') {
+          await setDoc(doc(db, item.collection, item.docId), sanitizeForFirestore(item.payload));
+        } else if (item.action === 'update') {
+          await updateDoc(doc(db, item.collection, item.docId), sanitizeForFirestore(item.payload));
+        } else if (item.action === 'delete') {
+          await deleteDoc(doc(db, item.collection, item.docId));
+        }
+        successfulCount++;
+      } catch (e) {
+        console.warn(`[Sync Engine] Could not process queued mutation ${item.id}:`, e);
+        remaining.push({ ...item, retryCount: (item.retryCount || 0) + 1 });
+      }
+    }
+
+    setOfflineQueue(remaining);
+    setIsSyncing(false);
+    setLastSyncedAt(new Date());
+
+    if (successfulCount > 0) {
+      setNotifications(prev => [
+        {
+          id: `notif_sync_${Date.now()}`,
+          title: 'Synchronisation Cloud Réussie',
+          message: `${successfulCount} opération(s) enregistrée(s) hors-ligne ont été synchronisées avec le Cloud.`,
+          type: 'success',
+          timestamp: new Date().toISOString(),
+          read: false
+        },
+        ...prev
+      ]);
+    }
+  }, [offlineQueue]);
+
+  // Online / Offline monitor with active ping probe
+  useEffect(() => {
+    const checkConnectivity = async () => {
+      if (!navigator.onLine) {
+        setIsOnline(false);
+        return;
+      }
+      try {
+        const res = await fetch('/manifest.json?probe=' + Date.now(), { method: 'HEAD', cache: 'no-store' });
+        if (res.ok) {
+          setIsOnline(true);
+        }
+      } catch {
+        setIsOnline(false);
+      }
+    };
+
+    const handleOnline = () => {
+      setIsOnline(true);
+      checkConnectivity();
+      processOfflineQueue();
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+
+    const interval = setInterval(() => {
+      checkConnectivity();
+      if (navigator.onLine && offlineQueue.length > 0) {
+        processOfflineQueue();
+      }
+    }, 15000);
+
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      clearInterval(interval);
     };
-  }, []);
+  }, [processOfflineQueue, offlineQueue.length]);
 
   // Multi-Device Real-Time Cloud Synchronization Engine with Firestore
   useEffect(() => {
@@ -707,6 +853,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let unsubscribeCustomerPayments: (() => void) | undefined;
     let unsubscribeCashSessions: (() => void) | undefined;
     let unsubscribeQuotations: (() => void) | undefined;
+    let unsubscribeInvoices: (() => void) | undefined;
 
     const setupFirestoreSync = async () => {
       try {
@@ -883,6 +1030,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         }, (err) => handleFirestoreError(err, OperationType.LIST, 'quotations'));
 
+        // 11. Real-Time Invoices Listener
+        const invCol = collection(db, 'invoices');
+        unsubscribeInvoices = onSnapshot(invCol, (snapshot) => {
+          if (!snapshot.empty) {
+            const list: Invoice[] = [];
+            snapshot.forEach(docSnap => {
+              list.push({ id: docSnap.id, ...docSnap.data() } as Invoice);
+            });
+            setInvoices(list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+          }
+        }, (err) => handleFirestoreError(err, OperationType.LIST, 'invoices'));
+
         setLastSyncedAt(new Date());
         setIsSyncing(false);
       } catch (e) {
@@ -904,14 +1063,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubscribeCustomerPayments?.();
       unsubscribeCashSessions?.();
       unsubscribeQuotations?.();
+      unsubscribeInvoices?.();
     };
   }, [isOnline]);
 
   // Manual / On-demand force sync helper
   const forceSyncCloudData = useCallback(async () => {
-    if (!isOnline) return;
+    if (!navigator.onLine) return;
     setIsSyncing(true);
     try {
+      // First process any pending offline queue
+      await processOfflineQueue();
+
       await ensureFirebaseAuth();
       const [
         bizSnap,
@@ -923,7 +1086,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         expSnap,
         usersSnap,
         cashSnap,
-        quotSnap
+        quotSnap,
+        invSnap
       ] = await Promise.all([
         getDocs(collection(db, 'businesses')),
         getDocs(collection(db, 'products')),
@@ -935,6 +1099,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         getDocs(collection(db, 'users')),
         getDocs(collection(db, 'cash_sessions')),
         getDocs(collection(db, 'quotations')),
+        getDocs(collection(db, 'invoices')),
       ]);
 
       if (!bizSnap.empty) {
@@ -999,13 +1164,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setQuotations(qList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
       }
 
+      if (!invSnap.empty) {
+        const invList: Invoice[] = [];
+        invSnap.forEach(d => invList.push({ id: d.id, ...d.data() } as Invoice));
+        setInvoices(invList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+      }
+
       setLastSyncedAt(new Date());
     } catch (err) {
       console.warn('Manual cloud sync notice:', err);
     } finally {
       setIsSyncing(false);
     }
-  }, [isOnline]);
+  }, [processOfflineQueue]);
 
   // Current Business scoped entities (Multi-tenancy isolation)
   const scopedProducts = useMemo(() => 
@@ -1324,17 +1495,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
 
         setCustomers(prev => prev.map(c => c.id === customerId ? updatedCustomer : c));
-
-        try {
-          await updateDoc(doc(db, 'customers', customerId), sanitizeForFirestore({
-            totalDebt: updatedCustomer.totalDebt,
-            loyaltyPoints: updatedCustomer.loyaltyPoints,
-            totalSpent: updatedCustomer.totalSpent,
-            loyaltyTier: updatedCustomer.loyaltyTier,
-          }));
-        } catch (err) {
-          console.warn('Customer loyalty update notice:', err);
-        }
+        await syncMutation('customers', customerId, 'update', {
+          totalDebt: updatedCustomer.totalDebt,
+          loyaltyPoints: updatedCustomer.loyaltyPoints,
+          totalSpent: updatedCustomer.totalSpent,
+          loyaltyTier: updatedCustomer.loyaltyTier,
+        }, `Fidélité client ${updatedCustomer.name}`);
       }
     }
 
@@ -1357,35 +1523,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
 
       setCashSessions(prev => prev.map(cs => cs.id === activeCashSession.id ? updatedSession : cs));
-
-      try {
-        await updateDoc(doc(db, 'cash_sessions', activeCashSession.id), sanitizeForFirestore(updatedSession) as any);
-      } catch (e) {
-        console.warn('Cash session sale sync notice:', e);
-      }
+      await syncMutation('cash_sessions', activeCashSession.id, 'update', updatedSession, 'Encaissement vente');
     }
 
     // 4. Clear cart
     clearCart();
 
-    // 5. Multi-Device Real-Time Cloud Firestore Sync
-    try {
-      await setDoc(doc(db, 'sales', saleId), sanitizeForFirestore(newSale));
-      
-      for (const p of updatedProducts) {
-        const itemInSale = saleItems.find(si => si.productId === p.id);
-        if (itemInSale) {
-          await updateDoc(doc(db, 'products', p.id), sanitizeForFirestore({
-            currentStock: p.currentStock,
-          }));
-        }
+    // 5. Multi-Device Real-Time Cloud Firestore Sync / Offline Queue
+    await syncMutation('sales', saleId, 'set', newSale, `Vente Ticket #${receiptNumber}`);
+    
+    for (const p of updatedProducts) {
+      const itemInSale = saleItems.find(si => si.productId === p.id);
+      if (itemInSale) {
+        await syncMutation('products', p.id, 'update', { currentStock: p.currentStock }, `Stock ${p.name}`);
       }
+    }
 
-      for (const mov of newMovements) {
-        await setDoc(doc(db, 'stock_movements', mov.id), sanitizeForFirestore(mov));
-      }
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, 'sales');
+    for (const mov of newMovements) {
+      await syncMutation('stock_movements', mov.id, 'set', mov, `Mouvement stock ${mov.productName}`);
     }
 
     return newSale;
@@ -1423,13 +1578,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setStockMovements(prev => [initMov!, ...prev]);
     }
 
-    try {
-      await setDoc(doc(db, 'products', id), sanitizeForFirestore(newProduct));
-      if (initMov) {
-        await setDoc(doc(db, 'stock_movements', initMov.id), sanitizeForFirestore(initMov));
-      }
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, `products/${id}`);
+    await syncMutation('products', id, 'set', newProduct, `Nouveau produit ${newProduct.name}`);
+    if (initMov) {
+      await syncMutation('stock_movements', initMov.id, 'set', initMov, `Stock initial ${newProduct.name}`);
     }
 
     return newProduct;
@@ -1441,11 +1592,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       prev.map(p => (p.id === id ? { ...p, ...updates } : p))
     );
 
-    try {
-      await updateDoc(doc(db, 'products', id), sanitizeForFirestore(updates));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `products/${id}`);
-    }
+    await syncMutation('products', id, 'update', updates, `Modification produit ${id}`);
   };
 
   // Apply Expiry Discount (Anti-Gaspillage)
@@ -1512,12 +1659,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setStockMovements(prev => [newMovement, ...prev]);
     await updateProduct(productId, { currentStock: nextStock });
-
-    try {
-      await setDoc(doc(db, 'stock_movements', movementId), sanitizeForFirestore(newMovement));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, `stock_movements/${movementId}`);
-    }
+    await syncMutation('stock_movements', movementId, 'set', newMovement, `Mouvement stock ${prod.name}`);
   };
 
   // Customer Management
@@ -1536,12 +1678,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setCustomers(prev => [newCustomer, ...prev]);
-
-    try {
-      await setDoc(doc(db, 'customers', id), sanitizeForFirestore(newCustomer));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, `customers/${id}`);
-    }
+    await syncMutation('customers', id, 'set', newCustomer, `Nouveau client ${newCustomer.name}`);
 
     return newCustomer;
   };
@@ -1551,11 +1688,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       prev.map(c => (c.id === id ? { ...c, ...updates } : c))
     );
 
-    try {
-      await updateDoc(doc(db, 'customers', id), sanitizeForFirestore(updates));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `customers/${id}`);
-    }
+    await syncMutation('customers', id, 'update', updates, `Modification client ${id}`);
   };
 
   const addLoyaltyPoints = async (customerId: string, pointsEarned: number, spentAmount: number) => {
@@ -1614,18 +1747,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         expectedCashInDrawer: activeCashSession.expectedCashInDrawer + amount,
       };
       setCashSessions(prev => prev.map(cs => cs.id === activeCashSession.id ? updatedSession : cs));
-      try {
-        await updateDoc(doc(db, 'cash_sessions', activeCashSession.id), sanitizeForFirestore(updatedSession) as any);
-      } catch (e) {
-        console.warn('Cash session payment sync error:', e);
-      }
+      await syncMutation('cash_sessions', activeCashSession.id, 'update', updatedSession, 'Encaissement règlement');
     }
 
-    try {
-      await setDoc(doc(db, 'customer_payments', paymentId), sanitizeForFirestore(newPayment));
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, `customer_payments/${paymentId}`);
-    }
+    await syncMutation('customer_payments', paymentId, 'set', newPayment, `Règlement client ${cust.name}`);
   };
 
   // Add Expense
@@ -1658,18 +1783,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         expectedCashInDrawer: Math.max(0, activeCashSession.expectedCashInDrawer - expenseData.amount),
       };
       setCashSessions(prev => prev.map(cs => cs.id === activeCashSession.id ? updatedSession : cs));
-      try {
-        await updateDoc(doc(db, 'cash_sessions', activeCashSession.id), sanitizeForFirestore(updatedSession) as any);
-      } catch (e) {
-        console.warn('Cash session expense sync error:', e);
-      }
+      await syncMutation('cash_sessions', activeCashSession.id, 'update', updatedSession, 'Décaissement dépense');
     }
 
-    try {
-      await setDoc(doc(db, 'expenses', id), sanitizeForFirestore(newExp));
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, `expenses/${id}`);
-    }
+    await syncMutation('expenses', id, 'set', newExp, `Dépense ${newExp.beneficiary}`);
 
     return newExp;
   };
@@ -1700,12 +1817,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setCashSessions(prev => [newSession, ...prev]);
-
-    try {
-      await setDoc(doc(db, 'cash_sessions', id), sanitizeForFirestore(newSession));
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, `cash_sessions/${id}`);
-    }
+    await syncMutation('cash_sessions', id, 'set', newSession, `Ouverture session caisse`);
 
     return newSession;
   };
@@ -1728,12 +1840,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setCashSessions(prev => prev.map(cs => cs.id === activeCashSession.id ? closedSession : cs));
-
-    try {
-      await updateDoc(doc(db, 'cash_sessions', activeCashSession.id), sanitizeForFirestore(closedSession) as any);
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `cash_sessions/${activeCashSession.id}`);
-    }
+    await syncMutation('cash_sessions', activeCashSession.id, 'update', closedSession, `Clôture session caisse`);
 
     return closedSession;
   };
@@ -1756,12 +1863,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setCashSessions(prev => prev.map(cs => cs.id === activeCashSession.id ? updatedSession : cs));
-
-    try {
-      await updateDoc(doc(db, 'cash_sessions', activeCashSession.id), sanitizeForFirestore(updatedSession) as any);
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `cash_sessions/${activeCashSession.id}`);
-    }
+    await syncMutation('cash_sessions', activeCashSession.id, 'update', updatedSession, `Mouvement caisse ${type}`);
   };
 
   // Quotation / Proforma Operations
@@ -1783,34 +1885,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setQuotations(prev => [newQuotation, ...prev]);
-
-    try {
-      await setDoc(doc(db, 'quotations', id), sanitizeForFirestore(newQuotation));
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, `quotations/${id}`);
-    }
+    await syncMutation('quotations', id, 'set', newQuotation, `Nouveau devis #${quotationNumber}`);
 
     return newQuotation;
   };
 
   const updateQuotationStatus = async (id: string, status: Quotation['status']) => {
     setQuotations(prev => prev.map(q => q.id === id ? { ...q, status } : q));
-
-    try {
-      await updateDoc(doc(db, 'quotations', id), sanitizeForFirestore({ status }));
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `quotations/${id}`);
-    }
+    await syncMutation('quotations', id, 'update', { status }, `Statut devis ${id}`);
   };
 
   const deleteQuotation = async (id: string) => {
     setQuotations(prev => prev.filter(q => q.id !== id));
-
-    try {
-      await deleteDoc(doc(db, 'quotations', id));
-    } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `quotations/${id}`);
-    }
+    await syncMutation('quotations', id, 'delete', undefined, `Suppression devis ${id}`);
   };
 
   // INVOICES
@@ -1833,12 +1920,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setInvoices(prev => [newInvoice, ...prev]);
-
-    try {
-      await setDoc(doc(db, 'invoices', id), sanitizeForFirestore(newInvoice));
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, `invoices/${id}`);
-    }
+    await syncMutation('invoices', id, 'set', newInvoice, `Nouvelle facture #${invoiceNumber}`);
 
     return newInvoice;
   };
@@ -1855,15 +1937,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return inv;
     }));
 
-    try {
-      const updates: any = { status };
-      if (amountPaid !== undefined) {
-        updates.amountPaid = amountPaid;
-      }
-      await updateDoc(doc(db, 'invoices', id), sanitizeForFirestore(updates));
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `invoices/${id}`);
+    const updates: any = { status };
+    if (amountPaid !== undefined) {
+      updates.amountPaid = amountPaid;
     }
+    await syncMutation('invoices', id, 'update', updates, `Statut facture ${id}`);
   };
 
   const loadQuotationToCart = (quotation: Quotation) => {
@@ -2088,6 +2166,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isSyncing,
         lastSyncedAt,
         forceSyncCloudData,
+        pendingSyncCount: offlineQueue.length,
+        offlineQueue,
+        processOfflineQueue,
         activeTab,
         setActiveTab,
         isPlatformAdminUnlocked,

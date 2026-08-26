@@ -30,6 +30,8 @@ export const Navbar: React.FC = () => {
     isOnline, 
     isSyncing, 
     forceSyncCloudData,
+    pendingSyncCount,
+    processOfflineQueue,
     notifications, 
     markNotificationAsRead, 
     clearAllNotifications,
@@ -102,25 +104,48 @@ export const Navbar: React.FC = () => {
               {isOnline ? (
                 <button 
                   onClick={() => forceSyncCloudData()}
-                  className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors cursor-pointer"
-                  title={isSyncing ? "Synchronisation Cloud Firestore en cours..." : "Connecté en temps réel. Cliquez pour forcer la synchronisation."}
+                  className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer ${
+                    pendingSyncCount > 0
+                      ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                      : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                  }`}
+                  title={
+                    isSyncing 
+                      ? "Synchronisation Cloud Firestore en cours..." 
+                      : pendingSyncCount > 0 
+                        ? `${pendingSyncCount} opération(s) en attente de synchronisation. Cliquez pour synchroniser.`
+                        : "Connecté en temps réel. Cliquez pour forcer la synchronisation."
+                  }
                 >
                   {isSyncing ? (
                     <RefreshCw className="h-3.5 w-3.5 text-emerald-600 animate-spin" />
+                  ) : pendingSyncCount > 0 ? (
+                    <RefreshCw className="h-3.5 w-3.5 text-amber-600" />
                   ) : (
                     <Wifi className="h-3.5 w-3.5 text-emerald-600" />
                   )}
                   <span className="hidden sm:inline">
-                    {isSyncing ? 'Sync Cloud...' : 'En ligne (Cloud)'}
+                    {isSyncing 
+                      ? 'Sync en cours...' 
+                      : pendingSyncCount > 0 
+                        ? `${pendingSyncCount} à synchroniser` 
+                        : 'En ligne (Cloud)'}
                   </span>
+                  {pendingSyncCount > 0 && !isSyncing && (
+                    <span className="inline-flex sm:hidden items-center justify-center bg-amber-600 text-white rounded-full h-4 w-4 text-[10px]">
+                      {pendingSyncCount}
+                    </span>
+                  )}
                 </button>
               ) : (
                 <div 
                   className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-300 animate-pulse cursor-default"
-                  title="Mode hors-ligne actif. Vos ventes et stocks sont enregistrés localement."
+                  title="Mode hors-ligne actif. Vos ventes, stocks et factures sont enregistrés localement."
                 >
                   <WifiOff className="h-3.5 w-3.5 text-amber-700" />
-                  <span>Hors-ligne (Local)</span>
+                  <span>
+                    Hors-ligne {pendingSyncCount > 0 ? `(${pendingSyncCount} en attente)` : '(Local)'}
+                  </span>
                 </div>
               )}
             </div>
@@ -278,6 +303,31 @@ export const Navbar: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Offline / Pending sync banner */}
+      {!isOnline && (
+        <div className="bg-gradient-to-r from-amber-500 to-amber-600 text-white px-4 py-1 text-xs text-center flex items-center justify-center gap-2 font-medium shadow-inner">
+          <WifiOff className="h-3.5 w-3.5 animate-pulse" />
+          <span>Mode Hors-Ligne actif — Vous pouvez continuer vos ventes, stocks et factures normalement. Tout sera synchronisé au retour du réseau.</span>
+          {pendingSyncCount > 0 && (
+            <span className="bg-amber-700/80 px-2 py-0.5 rounded-full text-[10px] font-semibold">
+              {pendingSyncCount} en attente
+            </span>
+          )}
+        </div>
+      )}
+      {isOnline && pendingSyncCount > 0 && (
+        <div className="bg-blue-600 text-white px-4 py-1 text-xs text-center flex items-center justify-center gap-2 font-medium shadow-inner">
+          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+          <span>Connexion rétablie — Synchronisation automatique de {pendingSyncCount} opération(s) en cours...</span>
+          <button 
+            onClick={() => forceSyncCloudData()}
+            className="underline text-[11px] font-bold hover:text-blue-100 ml-2"
+          >
+            Forcer maintenant
+          </button>
+        </div>
+      )}
     </header>
   );
 };

@@ -309,3 +309,14 @@ export interface BusinessSummary {
   expiringProductsCount?: number;
   activeCashSession?: CashSession | null;
 }
+
+export interface QueuedMutation {
+  id: string;
+  collection: string;
+  docId: string;
+  action: 'set' | 'update' | 'delete';
+  payload?: any;
+  timestamp: string;
+  description: string;
+  retryCount?: number;
+}
