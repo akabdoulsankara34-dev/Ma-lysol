@@ -718,20 +718,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ) => {
     if (navigator.onLine) {
       try {
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Network timeout (2.5s)')), 2500)
+        );
+
+        let firestoreTask: Promise<void>;
         if (action === 'set') {
-          await setDoc(doc(db, collectionName, docId), sanitizeForFirestore(payload));
+          firestoreTask = setDoc(doc(db, collectionName, docId), sanitizeForFirestore(payload));
         } else if (action === 'update') {
-          await updateDoc(doc(db, collectionName, docId), sanitizeForFirestore(payload));
-        } else if (action === 'delete') {
-          await deleteDoc(doc(db, collectionName, docId));
+          firestoreTask = updateDoc(doc(db, collectionName, docId), sanitizeForFirestore(payload));
+        } else {
+          firestoreTask = deleteDoc(doc(db, collectionName, docId));
         }
+
+        await Promise.race([firestoreTask, timeoutPromise]);
         return;
       } catch (err) {
-        console.warn(`[Sync] Direct cloud write failed for ${collectionName}/${docId}, queueing mutation:`, err);
+        console.warn(`[Sync] Direct cloud write fallback for ${collectionName}/${docId}:`, err);
       }
     }
 
-    // If offline or if direct write threw, save to offline outbox queue
+    // If offline or if direct write timed out/threw, save to offline outbox queue
     const mutationItem: QueuedMutation = {
       id: `queue_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
       collection: collectionName,
@@ -1495,7 +1502,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
 
         setCustomers(prev => prev.map(c => c.id === customerId ? updatedCustomer : c));
-        await syncMutation('customers', customerId, 'update', {
+        // Non-blocking sync
+        syncMutation('customers', customerId, 'update', {
           totalDebt: updatedCustomer.totalDebt,
           loyaltyPoints: updatedCustomer.loyaltyPoints,
           totalSpent: updatedCustomer.totalSpent,
@@ -1523,25 +1531,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
 
       setCashSessions(prev => prev.map(cs => cs.id === activeCashSession.id ? updatedSession : cs));
-      await syncMutation('cash_sessions', activeCashSession.id, 'update', updatedSession, 'Encaissement vente');
+      // Non-blocking sync
+      syncMutation('cash_sessions', activeCashSession.id, 'update', updatedSession, 'Encaissement vente');
     }
 
-    // 4. Clear cart
+    // 4. Clear cart immediately
     clearCart();
 
-    // 5. Multi-Device Real-Time Cloud Firestore Sync / Offline Queue
-    await syncMutation('sales', saleId, 'set', newSale, `Vente Ticket #${receiptNumber}`);
-    
-    for (const p of updatedProducts) {
-      const itemInSale = saleItems.find(si => si.productId === p.id);
-      if (itemInSale) {
-        await syncMutation('products', p.id, 'update', { currentStock: p.currentStock }, `Stock ${p.name}`);
-      }
-    }
+    // 5. Blazing-Fast Asynchronous Cloud Firestore Sync (Non-blocking parallel batch)
+    // Run in background so the receipt modal pops up in <30ms with zero lag
+    (async () => {
+      const syncTasks: Promise<any>[] = [
+        syncMutation('sales', saleId, 'set', newSale, `Vente Ticket #${receiptNumber}`)
+      ];
 
-    for (const mov of newMovements) {
-      await syncMutation('stock_movements', mov.id, 'set', mov, `Mouvement stock ${mov.productName}`);
-    }
+      for (const p of updatedProducts) {
+        const itemInSale = saleItems.find(si => si.productId === p.id);
+        if (itemInSale) {
+          syncTasks.push(
+            syncMutation('products', p.id, 'update', { currentStock: p.currentStock }, `Stock ${p.name}`)
+          );
+        }
+      }
+
+      for (const mov of newMovements) {
+        syncTasks.push(
+          syncMutation('stock_movements', mov.id, 'set', mov, `Mouvement stock ${mov.productName}`)
+        );
+      }
+
+      await Promise.allSettled(syncTasks);
+    })().catch(err => console.warn('[Fast Sale Sync Notice]:', err));
 
     return newSale;
   };

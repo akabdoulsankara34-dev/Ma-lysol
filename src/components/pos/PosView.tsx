@@ -18,8 +18,11 @@ import {
   Package,
   Layers,
   History,
-  ScanBarcode
+  ScanBarcode,
+  Zap,
+  Banknote
 } from 'lucide-react';
+import confetti from 'canvas-confetti';
 
 export const PosView: React.FC = () => {
   const { 
@@ -33,7 +36,8 @@ export const PosView: React.FC = () => {
     clearCart,
     business,
     sales,
-    currentUser
+    currentUser,
+    completeSale
   } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -44,6 +48,7 @@ export const PosView: React.FC = () => {
   const [lastCompletedSale, setLastCompletedSale] = useState<Sale | null>(null);
   const [showRecentSalesModal, setShowRecentSalesModal] = useState(false);
   const [viewReceiptFromHistory, setViewReceiptFromHistory] = useState<Sale | null>(null);
+  const [isQuickCheckingOut, setIsQuickCheckingOut] = useState(false);
 
   // Extract unique categories
   const categories = useMemo(() => {
@@ -81,6 +86,34 @@ export const PosView: React.FC = () => {
     setShowCheckoutModal(false);
     setOverallDiscount(0);
     setLastCompletedSale(sale);
+  };
+
+  const handleQuickCashSale = async () => {
+    if (cart.length === 0 || isQuickCheckingOut) return;
+    setIsQuickCheckingOut(true);
+    try {
+      const sale = await completeSale(
+        'cash',
+        undefined,
+        'Client Comptoir',
+        overallDiscount
+      );
+      try {
+        confetti({
+          particleCount: 40,
+          spread: 50,
+          origin: { y: 0.8 },
+          colors: ['#16a34a', '#22c55e', '#10b981']
+        });
+      } catch (e) {
+        // ignore
+      }
+      handleSaleSuccess(sale);
+    } catch (err: any) {
+      console.error('Quick cash sale error:', err);
+    } finally {
+      setIsQuickCheckingOut(false);
+    }
   };
 
   return (
@@ -363,15 +396,31 @@ export const PosView: React.FC = () => {
               </div>
             </div>
 
-            {/* Validate Button */}
-            <button
-              id="btn-open-pos-checkout"
-              onClick={() => setShowCheckoutModal(true)}
-              className="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white py-3 px-4 rounded-xl font-extrabold text-sm shadow-md flex items-center justify-center space-x-2 transition cursor-pointer"
-            >
-              <CreditCard className="h-4 w-4" />
-              <span>Valider la Vente ({totalAmount.toLocaleString()} {business.currency})</span>
-            </button>
+            {/* Fast Action Buttons */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+              <button
+                id="btn-quick-cash-checkout"
+                type="button"
+                disabled={isQuickCheckingOut}
+                onClick={handleQuickCashSale}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 text-white py-3 px-3 rounded-xl font-black text-xs sm:text-sm shadow-md flex items-center justify-center space-x-1.5 transition cursor-pointer"
+                title="Valider la vente immédiatement en espèces pour Client Comptoir"
+              >
+                <Zap className="h-4 w-4 fill-amber-300 text-amber-300" />
+                <span>{isQuickCheckingOut ? 'Validation...' : '⚡ Espèces Direct (1 Clic)'}</span>
+              </button>
+
+              <button
+                id="btn-open-pos-checkout"
+                type="button"
+                onClick={() => setShowCheckoutModal(true)}
+                className="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white py-3 px-3 rounded-xl font-bold text-xs sm:text-sm shadow-md flex items-center justify-center space-x-1.5 transition cursor-pointer"
+                title="Choisir Orange Money, Moov, Wave, Crédit ou Client"
+              >
+                <CreditCard className="h-4 w-4" />
+                <span>Paiements & Options</span>
+              </button>
+            </div>
           </div>
         )}
 
