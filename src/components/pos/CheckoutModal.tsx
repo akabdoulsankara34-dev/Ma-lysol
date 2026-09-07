@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Customer, PaymentMethod, Sale } from '../../types';
+import { broadcastCustomerDisplay } from '../../lib/customerDisplayService';
 import { 
   X, 
   Banknote, 
@@ -20,7 +21,7 @@ interface CheckoutModalProps {
   subtotal: number;
   discount: number;
   selectedCustomerId?: string;
-  onSuccess: (sale: Sale) => void;
+  onSuccess: (sale: Sale, receivedAmount?: number, changeToReturn?: number) => void;
   onClose: () => void;
 }
 
@@ -55,6 +56,28 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   // Change computation for cash
   const changeToReturn = Math.max(0, receivedAmount - totalAmount);
+
+  // Real-time broadcast to secondary customer display
+  useEffect(() => {
+    broadcastCustomerDisplay({
+      checkoutState: {
+        isCheckingOut: true,
+        paymentMethod,
+        receivedAmount,
+        changeToReturn
+      },
+      customerName: selectedCustomer?.name,
+      customerPhone: selectedCustomer?.phone,
+      loyaltyPoints: selectedCustomer?.loyaltyPoints,
+      loyaltyTier: selectedCustomer?.tier
+    });
+
+    return () => {
+      broadcastCustomerDisplay({
+        checkoutState: null
+      });
+    };
+  }, [paymentMethod, receivedAmount, changeToReturn, selectedCustomer]);
 
   // Rapid tender buttons for West African CFA Francs
   const tenderShortcuts = [
@@ -129,7 +152,11 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         // ignore in non-canvas environments
       }
 
-      onSuccess(sale);
+      onSuccess(
+        sale, 
+        paymentMethod === 'cash' ? receivedAmount : totalAmount, 
+        paymentMethod === 'cash' ? changeToReturn : 0
+      );
     } catch (err: any) {
       setErrorMessage(err.message || 'Erreur lors de la validation de la vente');
       setIsSubmitting(false);

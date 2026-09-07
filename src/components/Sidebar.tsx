@@ -14,7 +14,8 @@ import {
   CalendarClock,
   FileSpreadsheet,
   Barcode,
-  FileText
+  FileText,
+  Tv
 } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
@@ -30,6 +31,14 @@ export const Sidebar: React.FC = () => {
       icon: ShoppingCart,
       badge: cart.length > 0 ? `${cart.reduce((a, b) => a + b.quantity, 0)}` : null,
       badgeColor: 'bg-blue-600 text-white',
+      allowed: true,
+    },
+    {
+      id: 'customer_display' as const,
+      label: '2ème Écran Client',
+      icon: Tv,
+      badge: 'Live',
+      badgeColor: 'bg-indigo-500 text-white font-bold text-[10px]',
       allowed: true,
     },
     {

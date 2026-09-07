@@ -119,6 +119,16 @@ export class EscPosEncoder {
     return this;
   }
 
+  // Cash drawer kick-out pulse (ESC p m t1 t2 & DLE DC4 real-time kick)
+  // Connects via RJ11 / RJ12 from receipt printer to cash drawer
+  openDrawer(pin: 0 | 1 = 0): this {
+    // ESC p pin 25 250 (pulse 50ms ON, 500ms OFF)
+    this.buffer.push(ESC, 0x70, pin, 0x19, 0xFA);
+    // Real-time pulse DLE DC4 1 pin 5
+    this.buffer.push(0x10, 0x14, 0x01, pin, 0x05);
+    return this;
+  }
+
   // Get raw Uint8Array
   encode(): Uint8Array {
     return new Uint8Array(this.buffer);
@@ -252,6 +262,20 @@ class BluetoothPosPrinter {
 
   getConnectedDeviceName(): string | null {
     return this.device ? this.device.name || 'POS-80 BLE' : null;
+  }
+
+  // Trigger cash drawer kick-out command via connected Bluetooth POS Printer
+  async kickDrawer(): Promise<boolean> {
+    try {
+      if (!this.isConnected()) return false;
+      const encoder = new EscPosEncoder();
+      encoder.openDrawer(0);
+      await this.printData(encoder.encode());
+      return true;
+    } catch (err) {
+      console.warn('Could not kick drawer via Bluetooth printer:', err);
+      return false;
+    }
   }
 }
 

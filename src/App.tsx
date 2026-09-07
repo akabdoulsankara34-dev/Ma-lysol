@@ -19,6 +19,7 @@ import { ExpiryManagementView } from './components/expiry/ExpiryManagementView';
 import { ProformaInvoicesView } from './components/proformas/ProformaInvoicesView';
 import { BarcodeLabelsView } from './components/labels/BarcodeLabelsView';
 import { InvoicesView } from './components/invoices/InvoicesView';
+import { CustomerDisplayView } from './components/pos/CustomerDisplayView';
 
 const MainLayout: React.FC = () => {
   const { 
@@ -30,6 +31,15 @@ const MainLayout: React.FC = () => {
     setUserToSwitchWithPin,
     switchUser
   } = useApp();
+
+  // Check if this window was opened specifically as the Secondary Customer-Facing Display
+  const isDedicatedCustomerWindow = typeof window !== 'undefined' && (
+    new URLSearchParams(window.location.search).get('display') === 'customer'
+  );
+
+  if (isDedicatedCustomerWindow) {
+    return <CustomerDisplayView isStandaloneWindow={true} />;
+  }
 
   // If the user hasn't authenticated their business and isn't on the platform admin screen, show company login portal
   if (!isBusinessAuthenticated && activeTab !== 'admin') {
@@ -68,6 +78,7 @@ const MainLayout: React.FC = () => {
           {activeTab === 'expenses' && <ExpensesView />}
           {activeTab === 'dashboard' && (isManager ? <DashboardView /> : <PosView />)}
           {activeTab === 'settings' && (isOwner ? <SettingsView /> : <PosView />)}
+          {activeTab === 'customer_display' && <CustomerDisplayView />}
           {activeTab === 'admin' && (isPlatformAdminUnlocked ? <PlatformAdminView /> : <PosView />)}
         </main>
       </div>

@@ -37,7 +37,7 @@ export const DashboardView: React.FC = () => {
   const [viewMode, setViewMode] = useState<'live' | 'analytics'>('live');
   const [period, setPeriod] = useState<'today' | 'week' | 'month' | 'all'>('month');
 
-  // Filter dates
+  // Filter dates for standard KPI cards
   const filteredData = useMemo(() => {
     const now = new Date();
     const todayStr = now.toISOString().split('T')[0];
@@ -121,6 +121,74 @@ export const DashboardView: React.FC = () => {
       sellersPerformance,
     };
   }, [sales, expenses, period]);
+
+  // Analytical Reports (Weekly / Monthly Tables)
+  const reportsData = useMemo(() => {
+    // 1. Weekly Report (Last 7 Days)
+    const weekDays: Record<string, { date: string; label: string; revenue: number; cost: number; expense: number; profit: number }> = {};
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+      const label = d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
+      weekDays[dateStr] = { date: dateStr, label, revenue: 0, cost: 0, expense: 0, profit: 0 };
+    }
+    
+    // 2. Monthly Report
+    const months: Record<string, { monthStr: string; label: string; revenue: number; cost: number; expense: number; profit: number }> = {};
+
+    sales.forEach(s => {
+      const dateStr = s.createdAt.split('T')[0];
+      const monthStr = dateStr.substring(0, 7); // YYYY-MM
+      
+      // Weekly aggregation
+      if (weekDays[dateStr]) {
+        weekDays[dateStr].revenue += s.total;
+        weekDays[dateStr].cost += s.totalCost;
+      }
+      
+      // Monthly aggregation
+      if (!months[monthStr]) {
+        const d = new Date(s.createdAt);
+        const label = d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+        months[monthStr] = { monthStr, label: label.charAt(0).toUpperCase() + label.slice(1), revenue: 0, cost: 0, expense: 0, profit: 0 };
+      }
+      months[monthStr].revenue += s.total;
+      months[monthStr].cost += s.totalCost;
+    });
+
+    expenses.forEach(e => {
+      const dateStr = e.createdAt.split('T')[0];
+      const monthStr = dateStr.substring(0, 7);
+      
+      // Weekly
+      if (weekDays[dateStr]) {
+        weekDays[dateStr].expense += e.amount;
+      }
+      
+      // Monthly
+      if (!months[monthStr]) {
+        const d = new Date(e.createdAt);
+        const label = d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+        months[monthStr] = { monthStr, label: label.charAt(0).toUpperCase() + label.slice(1), revenue: 0, cost: 0, expense: 0, profit: 0 };
+      }
+      months[monthStr].expense += e.amount;
+    });
+
+    // Compute Profit
+    Object.values(weekDays).forEach(d => {
+      d.profit = d.revenue - d.cost - d.expense;
+    });
+    
+    Object.values(months).forEach(m => {
+      m.profit = m.revenue - m.cost - m.expense;
+    });
+
+    return {
+      weekly: Object.values(weekDays),
+      monthly: Object.values(months).sort((a, b) => b.monthStr.localeCompare(a.monthStr)) // Newest first
+    };
+  }, [sales, expenses]);
 
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
@@ -445,6 +513,103 @@ export const DashboardView: React.FC = () => {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Weekly & Monthly Reports Tables */}
+      <div className="space-y-6">
+        
+        {/* Weekly Report Table */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex items-center space-x-2">
+              <Calendar className="h-5 w-5 text-blue-600" />
+              <h3 className="font-bold text-sm sm:text-base text-slate-900">
+                Récapitulatif de la Semaine (7 Derniers Jours)
+              </h3>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs sm:text-sm whitespace-nowrap">
+              <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] sm:text-xs">
+                <tr>
+                  <th className="px-4 py-3 font-bold rounded-l-xl">Jour</th>
+                  <th className="px-4 py-3 font-bold text-right">Chiffre d'Affaires</th>
+                  <th className="px-4 py-3 font-bold text-right text-red-500">Dépenses</th>
+                  <th className="px-4 py-3 font-bold text-right text-emerald-600 rounded-r-xl">Bénéfice Net</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {reportsData.weekly.map((day, idx) => (
+                  <tr key={idx} className="hover:bg-slate-50 transition">
+                    <td className="px-4 py-3 font-bold text-slate-900 capitalize">{day.label}</td>
+                    <td className="px-4 py-3 text-right font-medium text-slate-700">{day.revenue.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right font-medium text-red-500">{day.expense > 0 ? `-${day.expense.toLocaleString()}` : '0'}</td>
+                    <td className={`px-4 py-3 text-right font-bold ${day.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                      {day.profit.toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+                {/* Total Row */}
+                <tr className="bg-slate-100 font-bold text-slate-900">
+                  <td className="px-4 py-3 rounded-l-xl uppercase text-xs">Total Semaine</td>
+                  <td className="px-4 py-3 text-right text-blue-700">
+                    {reportsData.weekly.reduce((acc, d) => acc + d.revenue, 0).toLocaleString()} {business.currency}
+                  </td>
+                  <td className="px-4 py-3 text-right text-red-600">
+                    -{reportsData.weekly.reduce((acc, d) => acc + d.expense, 0).toLocaleString()} {business.currency}
+                  </td>
+                  <td className={`px-4 py-3 text-right rounded-r-xl ${reportsData.weekly.reduce((acc, d) => acc + d.profit, 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                    {reportsData.weekly.reduce((acc, d) => acc + d.profit, 0).toLocaleString()} {business.currency}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Monthly Report Table (Owner Only) */}
+        {currentUser?.role === 'owner' && (
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center space-x-2">
+                <Layers className="h-5 w-5 text-indigo-600" />
+                <h3 className="font-bold text-sm sm:text-base text-slate-900">
+                  Récapitulatif Mensuel (Comptabilité Propriétaire)
+                </h3>
+              </div>
+            </div>
+            
+            {reportsData.monthly.length === 0 ? (
+              <p className="text-slate-400 text-xs py-6 text-center">Aucune donnée mensuelle disponible.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs sm:text-sm whitespace-nowrap">
+                  <thead className="bg-indigo-50 text-indigo-800 uppercase text-[10px] sm:text-xs">
+                    <tr>
+                      <th className="px-4 py-3 font-bold rounded-l-xl">Mois</th>
+                      <th className="px-4 py-3 font-bold text-right">Chiffre d'Affaires</th>
+                      <th className="px-4 py-3 font-bold text-right">Dépenses</th>
+                      <th className="px-4 py-3 font-bold text-right rounded-r-xl">Bénéfice Net</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {reportsData.monthly.map((m, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50 transition">
+                        <td className="px-4 py-3 font-bold text-slate-900 capitalize">{m.label}</td>
+                        <td className="px-4 py-3 text-right font-medium text-slate-700">{m.revenue.toLocaleString()} {business.currency}</td>
+                        <td className="px-4 py-3 text-right font-medium text-red-500">{m.expense > 0 ? `-${m.expense.toLocaleString()}` : '0'} {business.currency}</td>
+                        <td className={`px-4 py-3 text-right font-black ${m.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                          {m.profit.toLocaleString()} {business.currency}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
       </div>
     </div>
   )}

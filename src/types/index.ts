@@ -13,6 +13,7 @@ export type NavigationTab =
   | 'labels' 
   | 'dashboard' 
   | 'settings' 
+  | 'customer_display'
   | 'admin';
 
 export type PaymentMethod = 'cash' | 'orange_money' | 'moov_money' | 'wave_coris' | 'credit' | 'split';

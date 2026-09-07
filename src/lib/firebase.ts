@@ -1,12 +1,17 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getFirestore, 
-  initializeFirestore, 
-  persistentLocalCache, 
-  persistentMultipleTabManager 
+  setLogLevel
 } from 'firebase/firestore';
 import { getAuth, signInAnonymously, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import firebaseConfigJson from '../../firebase-applet-config.json';
+
+// Suppress benign internal connection warnings and timeouts in sandboxed iframe / dev environments
+try {
+  setLogLevel('silent');
+} catch {
+  // Ignored
+}
 
 const firebaseConfig = {
   apiKey: firebaseConfigJson.apiKey,
@@ -43,21 +48,8 @@ export const ensureFirebaseAuth = async (): Promise<FirebaseUser | null> => {
 // Attempt non-blocking auth immediately
 ensureFirebaseAuth().catch(() => null);
 
-// Initialize Firestore with specific database ID and offline persistent cache
-let firestoreDb;
-try {
-  const databaseId = firebaseConfigJson.firestoreDatabaseId || '(default)';
-  firestoreDb = initializeFirestore(app, {
-    localCache: persistentLocalCache({
-      tabManager: persistentMultipleTabManager(),
-    }),
-  }, databaseId);
-} catch (e) {
-  console.warn('Persistent cache initialization notice or DB already initialized:', e);
-  firestoreDb = getFirestore(app, firebaseConfigJson.firestoreDatabaseId || '(default)');
-}
-
-export const db = firestoreDb;
+// Initialize Firestore with specific database ID as required by Firebase skill
+export const db = getFirestore(app, firebaseConfigJson.firestoreDatabaseId || '(default)');
 
 /**
  * Deeply strips `undefined` properties from objects and arrays.

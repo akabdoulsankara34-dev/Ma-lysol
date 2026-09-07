@@ -14,9 +14,11 @@ import {
   Bluetooth,
   Wifi,
   AlertCircle,
-  Check
+  Check,
+  Unlock
 } from 'lucide-react';
 import { blePrinter, EscPosEncoder } from '../../lib/blePrinter';
+import { cashDrawerService } from '../../lib/cashDrawerService';
 
 interface ReceiptModalProps {
   sale: Sale;
@@ -26,7 +28,27 @@ interface ReceiptModalProps {
 
 export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onClose }) => {
   const [isBlePrinting, setIsBlePrinting] = useState(false);
+  const [isDrawerOpening, setIsDrawerOpening] = useState(false);
   const [bleStatus, setBleStatus] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+
+  const handleOpenDrawer = async () => {
+    setIsDrawerOpening(true);
+    try {
+      await cashDrawerService.triggerDrawer({
+        reason: `Reçu ${sale.receiptNumber} (Action Rapide)`,
+        paymentMethod: sale.paymentMethod,
+        saleId: sale.id,
+        isManual: true,
+        force: true
+      });
+      setBleStatus({ type: 'success', message: 'Tiroir-caisse à monnaie ouvert avec succès !' });
+      setTimeout(() => setBleStatus(null), 3500);
+    } catch (err: any) {
+      setBleStatus({ type: 'error', message: err.message || 'Erreur tiroir-caisse' });
+    } finally {
+      setIsDrawerOpening(false);
+    }
+  };
 
   const getPaymentLabel = (method: string) => {
     switch (method) {
@@ -55,6 +77,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
       
       // Store Header
       encoder.initialize()
+        .openDrawer(0) // Automatically pop cash drawer open via RJ11 when printing ticket
         .align('center')
         .bold(true)
         .textSize(2, 2)
@@ -287,24 +310,37 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
 
         {/* Action Buttons */}
         <div className="p-4 bg-white space-y-2">
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
+            <button
+              id="btn-open-drawer-receipt"
+              type="button"
+              disabled={isDrawerOpening}
+              onClick={handleOpenDrawer}
+              className="flex items-center justify-center space-x-1 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white py-2.5 px-1.5 rounded-xl font-bold text-xs shadow-xs transition disabled:opacity-50 cursor-pointer"
+              title="Déclencher manuellement l'ouverture du tiroir-caisse"
+            >
+              <Unlock className={`h-4 w-4 ${isDrawerOpening ? 'animate-bounce' : ''}`} />
+              <span className="truncate">Tiroir</span>
+            </button>
+
             <button
               id="btn-ble-print"
               type="button"
               disabled={isBlePrinting}
               onClick={handleBlePrint}
-              className="flex items-center justify-center space-x-1.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white py-2.5 px-2 rounded-xl font-bold text-xs shadow-xs transition disabled:opacity-50"
+              className="flex items-center justify-center space-x-1 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white py-2.5 px-1.5 rounded-xl font-bold text-xs shadow-xs transition disabled:opacity-50 cursor-pointer"
               title="Impression sans fil directe sur Imprimante POS-80 Bluetooth"
             >
               <Bluetooth className={`h-4 w-4 ${isBlePrinting ? 'animate-spin' : ''}`} />
-              <span className="truncate">POS80 BLE</span>
+              <span className="truncate">POS80</span>
             </button>
 
             <button
               id="btn-share-whatsapp"
               type="button"
               onClick={handleShareWhatsApp}
-              className="flex items-center justify-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white py-2.5 px-2 rounded-xl font-bold text-xs shadow-xs transition"
+              className="flex items-center justify-center space-x-1 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white py-2.5 px-1.5 rounded-xl font-bold text-xs shadow-xs transition cursor-pointer"
+              title="Partager le ticket sur WhatsApp"
             >
               <MessageCircle className="h-4 w-4 text-emerald-100" />
               <span className="truncate">WhatsApp</span>
@@ -314,10 +350,11 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
               id="btn-print-receipt"
               type="button"
               onClick={handlePrint}
-              className="flex items-center justify-center space-x-1.5 bg-slate-800 hover:bg-slate-900 active:bg-black text-white py-2.5 px-2 rounded-xl font-bold text-xs shadow-xs transition"
+              className="flex items-center justify-center space-x-1 bg-slate-800 hover:bg-slate-900 active:bg-black text-white py-2.5 px-1.5 rounded-xl font-bold text-xs shadow-xs transition cursor-pointer"
+              title="Imprimer via le navigateur ou PDF"
             >
               <Printer className="h-4 w-4 text-slate-200" />
-              <span className="truncate">Navigateur</span>
+              <span className="truncate">Imprimer</span>
             </button>
           </div>
 

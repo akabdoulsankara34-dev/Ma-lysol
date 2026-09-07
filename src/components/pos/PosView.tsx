@@ -1,9 +1,13 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Product, Sale } from '../../types';
 import { CheckoutModal } from './CheckoutModal';
 import { ReceiptModal } from './ReceiptModal';
 import { BarcodeScanner } from '../BarcodeScanner';
+import { 
+  broadcastCustomerDisplay, 
+  CustomerDisplayItem 
+} from '../../lib/customerDisplayService';
 import { 
   Search, 
   Plus, 
@@ -20,9 +24,18 @@ import {
   History,
   ScanBarcode,
   Zap,
-  Banknote
+  Banknote,
+  Monitor,
+  ExternalLink,
+  Copy,
+  Check,
+  Sparkles,
+  Tv,
+  Unlock
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { cashDrawerService } from '../../lib/cashDrawerService';
+import { CashDrawerModal } from './CashDrawerModal';
 
 export const PosView: React.FC = () => {
   const { 
@@ -37,7 +50,8 @@ export const PosView: React.FC = () => {
     business,
     sales,
     currentUser,
-    completeSale
+    completeSale,
+    setActiveTab
   } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -47,8 +61,31 @@ export const PosView: React.FC = () => {
   const [showScanner, setShowScanner] = useState(false);
   const [lastCompletedSale, setLastCompletedSale] = useState<Sale | null>(null);
   const [showRecentSalesModal, setShowRecentSalesModal] = useState(false);
+  const [showDisplayGuideModal, setShowDisplayGuideModal] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [viewReceiptFromHistory, setViewReceiptFromHistory] = useState<Sale | null>(null);
   const [isQuickCheckingOut, setIsQuickCheckingOut] = useState(false);
+  const [showCashDrawerModal, setShowCashDrawerModal] = useState(false);
+  const [drawerToast, setDrawerToast] = useState<{ reason: string; timestamp: number; hardwareKicked: boolean } | null>(null);
+
+  // Listen for Cash Drawer Opening events (auto or manual)
+  useEffect(() => {
+    const handleDrawerOpen = (e: any) => {
+      if (e.detail) {
+        setDrawerToast({
+          reason: e.detail.reason || 'Tiroir-caisse ouvert',
+          timestamp: e.detail.timestamp || Date.now(),
+          hardwareKicked: Boolean(e.detail.hardwareKicked)
+        });
+        setTimeout(() => setDrawerToast(null), 4000);
+      }
+    };
+
+    window.addEventListener('bizpilot:cash-drawer-opened', handleDrawerOpen);
+    return () => {
+      window.removeEventListener('bizpilot:cash-drawer-opened', handleDrawerOpen);
+    };
+  }, []);
 
   // Extract unique categories
   const categories = useMemo(() => {
@@ -82,10 +119,81 @@ export const PosView: React.FC = () => {
   const totalAmount = Math.max(0, subtotal - overallDiscount);
   const totalItemCount = cart.reduce((acc, item) => acc + item.quantity, 0);
 
-  const handleSaleSuccess = (sale: Sale) => {
+  // Real-Time Broadcast to 2nd Screen (Customer Display)
+  useEffect(() => {
+    const displayItems: CustomerDisplayItem[] = cart.map(item => ({
+      id: `${item.product.id}_${item.priceType || 'retail'}`,
+      productId: item.product.id,
+      name: item.product.name,
+      sku: item.product.sku,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      discount: item.discount || 0,
+      total: (item.unitPrice * item.quantity) - (item.discount || 0),
+      unit: item.product.unit,
+      priceType: item.priceType
+    }));
+
+    const lastItem = cart.length > 0 ? cart[cart.length - 1] : null;
+
+    broadcastCustomerDisplay({
+      businessName: business.name,
+      currency: business.currency,
+      phone: business.phone,
+      address: `${business.city}, ${business.sector}`,
+      slogan: business.receiptFooter || 'Gestion Commerciale & Point de Vente',
+      cashierName: currentUser.name,
+      items: displayItems,
+      itemCount: totalItemCount,
+      subtotal: subtotal,
+      discount: overallDiscount,
+      totalAmount: totalAmount,
+      lastScannedItem: lastItem ? {
+        name: lastItem.product.name,
+        quantity: lastItem.quantity,
+        unitPrice: lastItem.unitPrice,
+        total: (lastItem.unitPrice * lastItem.quantity) - (lastItem.discount || 0),
+        timestamp: Date.now()
+      } : null
+    });
+  }, [cart, overallDiscount, subtotal, totalAmount, totalItemCount, business, currentUser]);
+
+  const handleSaleSuccess = (sale: Sale, tenderReceived?: number, tenderChange?: number) => {
     setShowCheckoutModal(false);
     setOverallDiscount(0);
     setLastCompletedSale(sale);
+
+    // Broadcast completed sale for 2nd screen celebratory display & change confirmation
+    broadcastCustomerDisplay({
+      items: [],
+      itemCount: 0,
+      subtotal: 0,
+      discount: 0,
+      totalAmount: 0,
+      lastScannedItem: null,
+      checkoutState: null,
+      lastCompletedSale: {
+        receiptNumber: sale.receiptNumber,
+        totalAmount: sale.total,
+        receivedAmount: tenderReceived,
+        changeToReturn: tenderChange,
+        paymentMethod: sale.paymentMethod,
+        itemCount: sale.items.reduce((acc, it) => acc + it.quantity, 0),
+        customerName: sale.customerName,
+        date: sale.createdAt,
+        timestamp: Date.now()
+      }
+    });
+
+    // Automatically trigger Cash Drawer Opening upon receipt validation
+    cashDrawerService.triggerDrawer({
+      reason: `Validation Reçu N° ${sale.receiptNumber}`,
+      paymentMethod: sale.paymentMethod,
+      saleId: sale.id,
+      operatorName: currentUser?.name || 'Caissier'
+    }).catch(err => {
+      console.warn('Auto cash drawer trigger error:', err);
+    });
   };
 
   const handleQuickCashSale = async () => {
@@ -108,12 +216,31 @@ export const PosView: React.FC = () => {
       } catch (e) {
         // ignore
       }
-      handleSaleSuccess(sale);
+      handleSaleSuccess(sale, totalAmount, 0);
     } catch (err: any) {
       console.error('Quick cash sale error:', err);
     } finally {
       setIsQuickCheckingOut(false);
     }
+  };
+
+  const openCustomerDisplayWindow = () => {
+    const customerUrl = `${window.location.origin}${window.location.pathname}?display=customer`;
+    const win = window.open(
+      customerUrl,
+      'BizPilotCustomerDisplay',
+      'width=1024,height=768,menubar=no,toolbar=no,location=no,status=no,resizable=yes'
+    );
+    if (!win) {
+      setShowDisplayGuideModal(true);
+    }
+  };
+
+  const copyDisplayUrl = () => {
+    const customerUrl = `${window.location.origin}${window.location.pathname}?display=customer`;
+    navigator.clipboard.writeText(customerUrl);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2500);
   };
 
   return (
@@ -122,7 +249,7 @@ export const PosView: React.FC = () => {
       {/* LEFT COLUMN: Product Catalog & Search */}
       <div className="flex-1 flex flex-col h-full overflow-hidden p-3 sm:p-5 border-r border-slate-200">
         
-        {/* Top Controls: Search Bar & Recent Sales Button */}
+        {/* Top Controls: Search Bar, Customer Display & Recent Sales Button */}
         <div className="flex items-center space-x-2 sm:space-x-3 mb-3 shrink-0">
           <div className="relative flex-1 flex">
             <div className="relative flex-1">
@@ -153,10 +280,36 @@ export const PosView: React.FC = () => {
             </button>
           </div>
 
+          {/* Cash Drawer Quick Trigger & Config */}
+          <button
+            id="btn-cash-drawer-trigger"
+            onClick={() => setShowCashDrawerModal(true)}
+            className={`flex items-center space-x-1.5 border px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition shrink-0 cursor-pointer ${
+              drawerToast 
+                ? 'bg-amber-500 text-white border-amber-600 animate-pulse' 
+                : 'bg-amber-50 border-amber-300 hover:bg-amber-100 text-amber-900'
+            }`}
+            title="Gestion et ouverture automatique du tiroir-caisse"
+          >
+            <Unlock className="h-4 w-4 text-amber-600" />
+            <span className="hidden sm:inline">Tiroir Caisse</span>
+          </button>
+
+          {/* 2nd Screen / Customer Display Quick Button */}
+          <button
+            id="btn-customer-display-trigger"
+            onClick={openCustomerDisplayWindow}
+            className="flex items-center space-x-1.5 bg-blue-50 border border-blue-200 hover:bg-blue-100 text-blue-700 px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition shrink-0 cursor-pointer"
+            title="Ouvrir l'Afficheur Client (2ème Écran pour caisse double écran)"
+          >
+            <Tv className="h-4 w-4 text-blue-600 animate-pulse" />
+            <span className="hidden md:inline">2ème Écran Client</span>
+          </button>
+
           <button
             id="btn-recent-sales"
             onClick={() => setShowRecentSalesModal(true)}
-            className="flex items-center space-x-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-xl text-xs font-semibold shadow-xs transition shrink-0"
+            className="flex items-center space-x-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-xl text-xs font-semibold shadow-xs transition shrink-0 cursor-pointer"
             title="Historique des ventes du jour"
           >
             <History className="h-4 w-4 text-slate-500" />
@@ -521,6 +674,110 @@ export const PosView: React.FC = () => {
             setShowScanner(false);
           }}
           onClose={() => setShowScanner(false)}
+        />
+      )}
+
+      {/* CUSTOMER DISPLAY / 2ND SCREEN GUIDE MODAL */}
+      {showDisplayGuideModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 border border-slate-200">
+            <div className="p-5 bg-gradient-to-r from-slate-900 to-blue-950 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="h-10 w-10 rounded-xl bg-blue-600/30 border border-blue-400/40 flex items-center justify-center text-blue-300">
+                  <Tv className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base">Afficheur Client (2ème Écran)</h3>
+                  <p className="text-xs text-blue-200">Affichage en temps réel pour caisse double écran</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowDisplayGuideModal(false)}
+                className="text-slate-400 hover:text-white p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs sm:text-sm text-slate-600">
+              <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-xl text-blue-900">
+                <p className="font-semibold mb-1 flex items-center gap-1.5 text-blue-800">
+                  <Sparkles className="h-4 w-4 text-blue-600" />
+                  Synchronisation Instantanée (0ms)
+                </p>
+                <p className="text-xs text-blue-700">
+                  Dès que vous ajoutez, modifiez ou supprimez un article dans le catalogue, le 2ème écran affiche automatiquement les articles, le montant total, et la monnaie à rendre au client.
+                </p>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="space-y-2">
+                <button
+                  onClick={() => {
+                    const customerUrl = `${window.location.origin}${window.location.pathname}?display=customer`;
+                    window.open(customerUrl, 'BizPilotCustomerDisplay', 'width=1024,height=768');
+                    setShowDisplayGuideModal(false);
+                  }}
+                  className="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white py-3 px-4 rounded-xl font-bold flex items-center justify-center space-x-2 transition shadow-md cursor-pointer"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  <span>Ouvrir la Fenêtre de l'Écran Client</span>
+                </button>
+
+                <button
+                  onClick={copyDisplayUrl}
+                  className="w-full bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 py-2.5 px-4 rounded-xl font-semibold flex items-center justify-center space-x-2 transition cursor-pointer"
+                >
+                  {copiedLink ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4 text-slate-500" />}
+                  <span>{copiedLink ? 'Lien de l\'écran client copié !' : 'Copier le lien pour une tablette ou autre écran'}</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setShowDisplayGuideModal(false);
+                    setActiveTab('customer_display');
+                  }}
+                  className="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 py-2.5 px-4 rounded-xl font-semibold flex items-center justify-center space-x-2 transition cursor-pointer"
+                >
+                  <Tv className="h-4 w-4 text-indigo-600" />
+                  <span>Tester & Prévisualiser dans BizPilot</span>
+                </button>
+              </div>
+
+              {/* Guide steps */}
+              <div className="pt-2 border-t border-slate-100 space-y-2">
+                <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wider">Comment positionner le 2ème écran :</h4>
+                <ol className="list-decimal pl-4 space-y-1.5 text-xs text-slate-500">
+                  <li>Cliquez sur <strong>"Ouvrir la Fenêtre de l'Écran Client"</strong> ci-dessus.</li>
+                  <li>Glissez la nouvelle fenêtre ouverte vers votre deuxième moniteur ou écran orienté client.</li>
+                  <li>Appuyez sur la touche <strong>F11</strong> (ou le bouton Plein Écran) pour masquer les barres du navigateur.</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Cash Drawer Notification Banner */}
+      {drawerToast && (
+        <div className="fixed top-18 right-5 z-50 bg-gradient-to-r from-amber-600 to-amber-500 text-white px-4 py-3 rounded-2xl shadow-2xl flex items-center space-x-3 border border-amber-300">
+          <div className="h-9 w-9 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+            <Unlock className="h-5 w-5 text-white animate-bounce" />
+          </div>
+          <div>
+            <p className="font-black text-xs sm:text-sm leading-tight flex items-center gap-1.5">
+              Caisse à Monnaie Ouverte 💵
+            </p>
+            <p className="text-[11px] text-amber-100 font-medium">{drawerToast.reason}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Cash Drawer Control & Configuration Modal */}
+      {showCashDrawerModal && (
+        <CashDrawerModal 
+          onClose={() => setShowCashDrawerModal(false)} 
+          operatorName={currentUser?.name}
         />
       )}
     </div>

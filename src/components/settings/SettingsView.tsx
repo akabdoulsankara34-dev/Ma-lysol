@@ -23,9 +23,13 @@ import {
   Copy,
   Check,
   Building2,
-  Share2
+  Share2,
+  Unlock,
+  Zap,
+  AlertCircle
 } from 'lucide-react';
 import { blePrinter } from '../../lib/blePrinter';
+import { cashDrawerService } from '../../lib/cashDrawerService';
 import { TeamAccessManager } from './TeamAccessManager';
 
 export const SettingsView: React.FC = () => {
@@ -53,6 +57,9 @@ export const SettingsView: React.FC = () => {
   const [bizReceiptFooter, setBizReceiptFooter] = useState(business.receiptFooter || '');
   const [bizSaved, setBizSaved] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
+  const [drawerSettings, setDrawerSettings] = useState(cashDrawerService.getSettings());
+  const [isTestingDrawer, setIsTestingDrawer] = useState(false);
+  const [drawerTestMsg, setDrawerTestMsg] = useState<string | null>(null);
 
   const handleSaveBusiness = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -186,8 +193,8 @@ export const SettingsView: React.FC = () => {
               : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
           }`}
         >
-          <Smartphone className="h-4 w-4" />
-          <span>Imprimante POS-80 BLE & PWA</span>
+          <Unlock className="h-4 w-4" />
+          <span>Tiroir-Caisse & Imprimante POS</span>
         </button>
 
         <button
@@ -313,15 +320,154 @@ export const SettingsView: React.FC = () => {
         </div>
       )}
 
-      {/* 3. POS-80 BLE Printer & PWA settings */}
+      {/* 3. POS-80 BLE Printer, Cash Drawer & PWA settings */}
       {activeSettingsTab === 'printer' && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
-          <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-            <div className="flex items-center space-x-2">
-              <Smartphone className="h-5 w-5 text-blue-600" />
-              <h2 className="font-bold text-slate-900 text-sm sm:text-base">Imprimante POS-80 Bluetooth & Application PWA</h2>
+        <div className="space-y-4">
+          
+          {/* Automatic Cash Drawer Card */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-amber-50/70">
+              <div className="flex items-center space-x-2.5">
+                <div className="h-9 w-9 rounded-xl bg-amber-500/20 text-amber-800 flex items-center justify-center">
+                  <Unlock className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="font-bold text-slate-900 text-sm sm:text-base">Caisse à Monnaie Automatique (Tiroir-Caisse)</h2>
+                  <p className="text-[11px] text-amber-800 font-medium">Déclenchement automatique de l'ouverture lors de la validation du reçu de caisse</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isTestingDrawer}
+                onClick={async () => {
+                  setIsTestingDrawer(true);
+                  setDrawerTestMsg(null);
+                  try {
+                    const res = await cashDrawerService.triggerDrawer({
+                      reason: 'Test ouverture depuis Paramètres',
+                      isManual: true,
+                      operatorName: 'Administrateur',
+                      force: true
+                    });
+                    setDrawerTestMsg(res.hardwareKicked ? 'Signal matériel envoyé au tiroir !' : 'Tiroir déclenché (simulation sonore active) !');
+                    setTimeout(() => setDrawerTestMsg(null), 4000);
+                  } catch (e: any) {
+                    setDrawerTestMsg(`Erreur : ${e.message}`);
+                  } finally {
+                    setIsTestingDrawer(false);
+                  }
+                }}
+                className="flex items-center space-x-1.5 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white px-3.5 py-2 rounded-xl font-bold text-xs shadow-xs transition cursor-pointer disabled:opacity-50"
+              >
+                <Zap className="h-4 w-4" />
+                <span>{isTestingDrawer ? 'Ouverture...' : 'Tester le Tiroir'}</span>
+              </button>
+            </div>
+
+            {drawerTestMsg && (
+              <div className="px-5 py-2.5 bg-amber-100 text-amber-900 font-bold text-xs border-b border-amber-200 flex items-center gap-2">
+                <Check className="h-4 w-4 text-emerald-600" />
+                <span>{drawerTestMsg}</span>
+              </div>
+            )}
+
+            <div className="p-5 space-y-4 text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                
+                {/* Auto Open */}
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 flex flex-col justify-between">
+                  <div>
+                    <p className="font-bold text-slate-900">Ouverture automatique</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Déclencher l'ouverture dès qu'un reçu de caisse est validé.
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer pt-1">
+                    <input
+                      type="checkbox"
+                      checked={drawerSettings.autoOpenOnSaleValidation}
+                      onChange={(e) => {
+                        const up = cashDrawerService.saveSettings({ autoOpenOnSaleValidation: e.target.checked });
+                        setDrawerSettings(up);
+                      }}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-300 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[6px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600"></div>
+                    <span className="ml-2.5 text-[11px] font-bold text-slate-700">
+                      {drawerSettings.autoOpenOnSaleValidation ? 'Activée' : 'Désactivée'}
+                    </span>
+                  </label>
+                </div>
+
+                {/* Restrict to Cash */}
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 flex flex-col justify-between">
+                  <div>
+                    <p className="font-bold text-slate-900">Filtre Espèces / Mixte</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      N'ouvrir que si le règlement comporte des espèces.
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer pt-1">
+                    <input
+                      type="checkbox"
+                      checked={drawerSettings.openOnlyOnCashOrSplit}
+                      onChange={(e) => {
+                        const up = cashDrawerService.saveSettings({ openOnlyOnCashOrSplit: e.target.checked });
+                        setDrawerSettings(up);
+                      }}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-300 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[6px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600"></div>
+                    <span className="ml-2.5 text-[11px] font-bold text-slate-700">
+                      {drawerSettings.openOnlyOnCashOrSplit ? 'Espèces uniquement' : 'Toutes les ventes'}
+                    </span>
+                  </label>
+                </div>
+
+                {/* Sound */}
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 flex flex-col justify-between">
+                  <div>
+                    <p className="font-bold text-slate-900">Bruit de Caisse Enregistreuse</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Jouer le bruitage mécanique et le carillon "Cha-Ching".
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer pt-1">
+                    <input
+                      type="checkbox"
+                      checked={drawerSettings.soundFeedback}
+                      onChange={(e) => {
+                        const up = cashDrawerService.saveSettings({ soundFeedback: e.target.checked });
+                        setDrawerSettings(up);
+                      }}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-300 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[6px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600"></div>
+                    <span className="ml-2.5 text-[11px] font-bold text-slate-700">
+                      {drawerSettings.soundFeedback ? 'Son actif' : 'Muet'}
+                    </span>
+                  </label>
+                </div>
+
+              </div>
+
+              <div className="p-3 bg-amber-50/50 border border-amber-200 rounded-xl text-[11px] text-amber-900 flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
+                <p>
+                  <strong>Branchement physique :</strong> Reliez le câble RJ11/RJ12 du tiroir-caisse directement au port <em>DK (Drawer Kick)</em> de votre imprimante thermique POS (Bluetooth ou USB). BizPilot transmet automatiquement les impulsions ESC/POS <code>ESC p 0 25 250</code> pour déverrouiller la serrure électromagnétique.
+                </p>
+              </div>
             </div>
           </div>
+
+          {/* POS-80 BLE Printer Card */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center space-x-2">
+                <Smartphone className="h-5 w-5 text-blue-600" />
+                <h2 className="font-bold text-slate-900 text-sm sm:text-base">Imprimante POS-80 Bluetooth & Application PWA</h2>
+              </div>
+            </div>
 
           <div className="p-5 space-y-4 text-xs">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3.5 bg-blue-50/60 border border-blue-200 rounded-xl">
@@ -366,6 +512,7 @@ export const SettingsView: React.FC = () => {
             </div>
           </div>
         </div>
+      </div>
       )}
 
       {/* 4. Backup & Restoration */}
