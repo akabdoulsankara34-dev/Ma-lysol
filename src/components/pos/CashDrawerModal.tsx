@@ -86,7 +86,7 @@ export const CashDrawerModal: React.FC<CashDrawerModalProps> = ({ onClose, opera
     setIsBleConnecting(true);
     setFeedbackMsg(null);
     try {
-      const res = await blePrinter.connect();
+      const res = await blePrinter.connect(true);
       setBleDeviceName(res.name);
       setFeedbackMsg({ type: 'success', text: `Connecté à l'imprimante thermique BLE : ${res.name}` });
     } catch (err: any) {

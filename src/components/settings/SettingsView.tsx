@@ -483,7 +483,7 @@ export const SettingsView: React.FC = () => {
               <button
                 onClick={async () => {
                   try {
-                    const dev = await blePrinter.connect();
+                    const dev = await blePrinter.connect(true);
                     alert(`Imprimante connectée avec succès : ${dev.name}`);
                   } catch (e: any) {
                     alert(e.message || 'Erreur de connexion Bluetooth');

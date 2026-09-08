@@ -155,20 +155,30 @@ class BluetoothPosPrinter {
     return typeof navigator !== 'undefined' && 'bluetooth' in navigator;
   }
 
-  async connect(): Promise<{ name: string }> {
+  async connect(forceNew: boolean = false): Promise<{ name: string }> {
     if (!this.isBluetoothSupported()) {
       throw new Error("L'API Web Bluetooth n'est pas supportée par ce navigateur. Utilisez Chrome/Edge ou activez Bluetooth.");
     }
 
     try {
-      const nav = navigator as any;
-      // Request device with optional services
-      const device = await nav.bluetooth.requestDevice({
-        acceptAllDevices: true,
-        optionalServices: this.PRINT_SERVICES,
-      });
+      let device = this.device;
 
-      this.device = device;
+      // Request a new device if forced or if we don't have one cached
+      if (!device || forceNew) {
+        const nav = navigator as any;
+        device = await nav.bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: this.PRINT_SERVICES,
+        });
+
+        // Listen for disconnects to allow auto-reconnect
+        device.addEventListener('gattserverdisconnected', () => {
+          console.warn('Imprimante BLE déconnectée (mise en veille ou hors de portée).');
+          this.characteristic = null;
+        });
+
+        this.device = device;
+      }
 
       // Connect to GATT Server
       const server = await device.gatt.connect();
@@ -228,7 +238,7 @@ class BluetoothPosPrinter {
 
   async printData(data: Uint8Array): Promise<void> {
     if (!this.characteristic) {
-      await this.connect();
+      await this.connect(false);
     }
 
     if (!this.characteristic) {
@@ -237,15 +247,38 @@ class BluetoothPosPrinter {
 
     // Send in chunks of 100 bytes to avoid BLE buffer overflow
     const CHUNK_SIZE = 100;
-    for (let i = 0; i < data.length; i += CHUNK_SIZE) {
-      const chunk = data.slice(i, i + CHUNK_SIZE);
-      if (this.characteristic.writeValueWithoutResponse) {
-        await this.characteristic.writeValueWithoutResponse(chunk);
-      } else {
-        await this.characteristic.writeValue(chunk);
+    try {
+      for (let i = 0; i < data.length; i += CHUNK_SIZE) {
+        const chunk = data.slice(i, i + CHUNK_SIZE);
+        if (this.characteristic.writeValueWithoutResponse) {
+          await this.characteristic.writeValueWithoutResponse(chunk);
+        } else {
+          await this.characteristic.writeValue(chunk);
+        }
+        // Brief delay between chunks
+        await new Promise((r) => setTimeout(r, 20));
       }
-      // Brief delay between chunks
-      await new Promise((r) => setTimeout(r, 20));
+    } catch (err: any) {
+      // If writing fails, the connection might be stale. Try to auto-reconnect once.
+      console.warn('Bluetooth write failed, attempting to reconnect...', err);
+      this.characteristic = null;
+      if (this.device && this.device.gatt) {
+        try { await this.device.gatt.disconnect(); } catch (e) {}
+      }
+      
+      await this.connect(false);
+      if (!this.characteristic) throw new Error("Échec de la reconnexion automatique.");
+      
+      // Retry writing
+      for (let i = 0; i < data.length; i += CHUNK_SIZE) {
+        const chunk = data.slice(i, i + CHUNK_SIZE);
+        if (this.characteristic.writeValueWithoutResponse) {
+          await this.characteristic.writeValueWithoutResponse(chunk);
+        } else {
+          await this.characteristic.writeValue(chunk);
+        }
+        await new Promise((r) => setTimeout(r, 20));
+      }
     }
   }
 
