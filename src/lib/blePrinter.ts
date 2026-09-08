@@ -63,6 +63,7 @@ export class EscPosEncoder {
   text(str: string): this {
     // Normalize string to replace unsupported special unicode with ASCII equivalents
     const normalized = str
+      .replace(/[\u202F\u00A0]/g, ' ') // Replace non-breaking spaces with normal spaces
       .replace(/é/g, 'e')
       .replace(/è/g, 'e')
       .replace(/ê/g, 'e')

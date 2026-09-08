@@ -101,10 +101,12 @@ export const PosView: React.FC = () => {
     return products.filter(p => {
       if (p.archived) return false;
       const matchesCategory = selectedCategory === 'Tous' || p.category === selectedCategory;
+      const searchLower = searchQuery.toLowerCase().trim();
       const matchesSearch = 
-        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.category.toLowerCase().includes(searchQuery.toLowerCase());
+        p.name.toLowerCase().includes(searchLower) ||
+        p.sku.toLowerCase().includes(searchLower) ||
+        (p.barcode && p.barcode.toLowerCase().includes(searchLower)) ||
+        p.category.toLowerCase().includes(searchLower);
       return matchesCategory && matchesSearch;
     });
   }, [products, selectedCategory, searchQuery]);
@@ -243,6 +245,53 @@ export const PosView: React.FC = () => {
     setTimeout(() => setCopiedLink(false), 2500);
   };
 
+  // --------------------------------------------------------
+  // GLOBAL BARCODE SCANNER LISTENER (For Physical Scanners)
+  // --------------------------------------------------------
+  useEffect(() => {
+    let barcodeBuffer = '';
+    let barcodeTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      // Ignore if typing in an input/textarea
+      if (
+        target.tagName === 'INPUT' || 
+        target.tagName === 'TEXTAREA' || 
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        barcodeBuffer += e.key;
+        if (barcodeTimer) clearTimeout(barcodeTimer);
+        barcodeTimer = setTimeout(() => {
+          barcodeBuffer = '';
+        }, 50); // Scanners type very fast
+      } 
+      else if (e.key === 'Enter' && barcodeBuffer.length > 2) {
+        const scannedCode = barcodeBuffer.trim().toLowerCase();
+        barcodeBuffer = '';
+        if (barcodeTimer) clearTimeout(barcodeTimer);
+        
+        const exactSkuMatch = products.find(
+          p => !p.archived && (p.sku.toLowerCase() === scannedCode || p.barcode?.toLowerCase() === scannedCode)
+        );
+        
+        if (exactSkuMatch && exactSkuMatch.currentStock > 0) {
+          addToCart(exactSkuMatch, 1);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeyDown);
+      if (barcodeTimer) clearTimeout(barcodeTimer);
+    };
+  }, [products, addToCart]);
+
   return (
     <div className="h-[calc(100vh-4rem)] flex flex-col lg:flex-row overflow-hidden bg-slate-50">
       
@@ -260,6 +309,22 @@ export const PosView: React.FC = () => {
                 placeholder="Rechercher un article (ex: Riz, Sucre, Huile, Savon...)"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && searchQuery.trim() !== '') {
+                    const searchLower = searchQuery.trim().toLowerCase();
+                    const exactSkuMatch = products.find(
+                      p => !p.archived && (p.sku.toLowerCase() === searchLower || p.barcode?.toLowerCase() === searchLower)
+                    );
+                    
+                    if (exactSkuMatch && exactSkuMatch.currentStock > 0) {
+                      addToCart(exactSkuMatch, 1);
+                      setSearchQuery('');
+                    } else if (filteredProducts.length === 1 && filteredProducts[0].currentStock > 0) {
+                      addToCart(filteredProducts[0], 1);
+                      setSearchQuery('');
+                    }
+                  }
+                }}
                 className="w-full bg-white border border-slate-200 rounded-l-xl pl-9 pr-4 py-2 text-xs sm:text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-xs"
               />
               {searchQuery && (
@@ -670,8 +735,18 @@ export const PosView: React.FC = () => {
       {showScanner && (
         <BarcodeScanner
           onScan={(decodedText) => {
-            setSearchQuery(decodedText);
-            setShowScanner(false);
+            const searchLower = decodedText.trim().toLowerCase();
+            const exactSkuMatch = products.find(
+              p => !p.archived && (p.sku.toLowerCase() === searchLower || p.barcode?.toLowerCase() === searchLower)
+            );
+            
+            if (exactSkuMatch && exactSkuMatch.currentStock > 0) {
+              addToCart(exactSkuMatch, 1);
+              setShowScanner(false);
+            } else {
+              setSearchQuery(decodedText);
+              setShowScanner(false);
+            }
           }}
           onClose={() => setShowScanner(false)}
         />

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { 
   ShoppingCart, 
@@ -15,11 +15,14 @@ import {
   FileSpreadsheet,
   Barcode,
   FileText,
-  Tv
+  Tv,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
   const { activeTab, setActiveTab, currentUser, summary, cart, isPlatformAdminUnlocked, activeCashSession } = useApp();
+  const [isCollapsed, setIsCollapsed] = useState(false);
 
   const isOwner = currentUser.role === 'owner' || currentUser.role === 'admin';
   const isStockManager = currentUser.role === 'stock_manager' || isOwner;
@@ -134,12 +137,23 @@ export const Sidebar: React.FC = () => {
   ];
 
   return (
-    <aside className="hidden lg:flex lg:flex-col w-64 bg-slate-900 text-slate-300 border-r border-slate-800 p-4 shrink-0 min-h-[calc(100vh-4rem)]">
-      <div className="space-y-1">
-        <p className="px-3 text-xs font-semibold uppercase text-slate-500 tracking-wider mb-2">
-          Navigation Principale
-        </p>
+    <aside className={`hidden lg:flex lg:flex-col ${isCollapsed ? 'w-20 items-center' : 'w-64'} bg-slate-900 text-slate-300 border-r border-slate-800 p-4 shrink-0 min-h-[calc(100vh-4rem)] transition-all duration-300 ease-in-out`}>
+      <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'} w-full mb-4 mt-1`}>
+        {!isCollapsed && (
+          <span className="px-2 text-xs font-semibold uppercase text-slate-500 tracking-wider">
+            Navigation
+          </span>
+        )}
+        <button 
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+          title={isCollapsed ? "Déployer le menu" : "Rabattre le menu"}
+        >
+          {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+        </button>
+      </div>
 
+      <div className="space-y-1 w-full">
         {navItems.filter(item => item.allowed).map(item => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
@@ -148,20 +162,24 @@ export const Sidebar: React.FC = () => {
               key={item.id}
               id={`sidebar-link-${item.id}`}
               onClick={() => setActiveTab(item.id)}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+              title={isCollapsed ? item.label : undefined}
+              className={`w-full flex items-center ${isCollapsed ? 'justify-center py-3' : 'justify-between px-3 py-2'} rounded-lg text-xs font-medium transition-all relative ${
                 isActive
                   ? 'bg-blue-600 text-white font-semibold shadow-sm'
                   : 'text-slate-400 hover:bg-slate-800 hover:text-white'
               }`}
             >
-              <div className="flex items-center space-x-2.5 truncate">
-                <Icon className={`h-4 w-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                <span className="truncate">{item.label}</span>
+              <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'space-x-2.5'} truncate`}>
+                <Icon className={`h-[18px] w-[18px] shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                {!isCollapsed && <span className="truncate">{item.label}</span>}
               </div>
-              {item.badge && (
+              {!isCollapsed && item.badge && (
                 <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${item.badgeColor || 'bg-slate-700 text-slate-200'}`}>
                   {item.badge}
                 </span>
+              )}
+              {isCollapsed && item.badge && (
+                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-blue-500 ring-2 ring-slate-900" />
               )}
             </button>
           );
@@ -169,17 +187,17 @@ export const Sidebar: React.FC = () => {
       </div>
 
       {/* Low stock alert box at bottom of sidebar */}
-      {(summary.lowStockCount > 0 || summary.outOfStockCount > 0) && (
-        <div className="mt-4">
+      {!isCollapsed && (summary.lowStockCount > 0 || summary.outOfStockCount > 0) && (
+        <div className="mt-4 w-full">
           <div 
             onClick={() => setActiveTab('stock')}
             className="p-3 bg-red-950/50 border border-red-800/60 rounded-xl cursor-pointer hover:bg-red-900/40 transition"
           >
             <div className="flex items-center space-x-2 text-red-400 font-semibold text-xs mb-1">
-              <AlertCircle className="h-4 w-4" />
-              <span>Alerte Réapprovisionnement</span>
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span className="truncate">Alerte Stocks</span>
             </div>
-            <p className="text-[11px] text-red-200/80">
+            <p className="text-[11px] text-red-200/80 leading-tight">
               {summary.outOfStockCount > 0 ? `${summary.outOfStockCount} rupture(s)` : ''}
               {summary.outOfStockCount > 0 && summary.lowStockCount > 0 ? ' et ' : ''}
               {summary.lowStockCount > 0 ? `${summary.lowStockCount} stock(s) faible(s)` : ''}.
@@ -188,15 +206,34 @@ export const Sidebar: React.FC = () => {
         </div>
       )}
 
-      {/* System Status footer in sidebar */}
-      <div className="mt-auto pt-4 border-t border-slate-800">
-        <div className="flex items-center justify-between px-2 text-xs text-slate-400">
-          <div className="flex items-center gap-2 text-emerald-400 font-medium">
-            <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></span>
-            <span>Multi-Tenant Cloud</span>
-          </div>
-          <span className="text-slate-500 font-mono text-[11px]">v2.5</span>
+      {isCollapsed && (summary.lowStockCount > 0 || summary.outOfStockCount > 0) && (
+        <div className="mt-4 w-full flex justify-center">
+          <button 
+            onClick={() => setActiveTab('stock')} 
+            className="p-2.5 bg-red-950/50 rounded-lg border border-red-800/60 relative hover:bg-red-900/50 transition-colors"
+            title="Alerte Stocks"
+          >
+            <AlertCircle className="w-5 h-5 text-red-400" />
+            <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-red-500 ring-2 ring-slate-900" />
+          </button>
         </div>
+      )}
+
+      {/* System Status footer in sidebar */}
+      <div className="mt-auto pt-4 border-t border-slate-800 w-full">
+        {!isCollapsed ? (
+          <div className="flex items-center justify-between px-2 text-xs text-slate-400">
+            <div className="flex items-center gap-2 text-emerald-400 font-medium truncate">
+              <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse shrink-0"></span>
+              <span className="truncate">Multi-Tenant Cloud</span>
+            </div>
+            <span className="text-slate-500 font-mono text-[11px] shrink-0">v2.5</span>
+          </div>
+        ) : (
+          <div className="flex justify-center">
+            <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" title="Cloud connecté (v2.5)"></span>
+          </div>
+        )}
       </div>
     </aside>
   );

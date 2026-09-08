@@ -119,7 +119,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
 
       encoder.bold(true)
         .textSize(2, 2)
-        .row('TOTAL :', `${sale.total.toLocaleString()} ${business.currency}`, 32)
+        .row('TOTAL :', `${sale.total.toLocaleString()} ${business.currency}`, 21)
         .textSize(1, 1)
         .bold(false)
         .row('Reglement :', getPaymentLabel(sale.paymentMethod), 42)

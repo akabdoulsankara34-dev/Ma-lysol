@@ -34,7 +34,7 @@ const MainLayout: React.FC = () => {
 
   // Check if this window was opened specifically as the Secondary Customer-Facing Display
   const isDedicatedCustomerWindow = typeof window !== 'undefined' && (
-    new URLSearchParams(window.location.search).get('display') === 'customer'
+    window.location.href.includes('display=customer')
   );
 
   if (isDedicatedCustomerWindow) {

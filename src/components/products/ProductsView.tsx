@@ -165,10 +165,11 @@ export const ProductsView: React.FC = () => {
       if (selectedCategory !== 'Tous' && p.category !== selectedCategory) return false;
 
       // Search
-      const search = searchQuery.toLowerCase();
+      const search = searchQuery.toLowerCase().trim();
       return (
         p.name.toLowerCase().includes(search) ||
         p.sku.toLowerCase().includes(search) ||
+        (p.barcode && p.barcode.toLowerCase().includes(search)) ||
         p.category.toLowerCase().includes(search) ||
         (p.supplier && p.supplier.toLowerCase().includes(search))
       );

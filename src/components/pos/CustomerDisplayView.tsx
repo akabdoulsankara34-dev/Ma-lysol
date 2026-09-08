@@ -425,10 +425,10 @@ export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({ isStan
 
         {/* STATE C: ACTIVE TRANSACTION IN REAL TIME (Items in Cart) */}
         {!isIdle && !isRecentSaleCompleted && (
-          <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 overflow-hidden">
+          <div className="flex-1 flex flex-col lg:grid lg:grid-cols-12 gap-4 sm:gap-6 overflow-hidden">
             
             {/* LEFT COLUMN: LIVE ARTICLES STREAM (7 Columns) */}
-            <div className="lg:col-span-7 flex flex-col bg-slate-900/80 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
+            <div className="flex-1 lg:col-span-7 flex flex-col bg-slate-900/80 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
               
               {/* Last Scanned Item Alert Banner */}
               {lastScannedItem && (
@@ -527,7 +527,7 @@ export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({ isStan
             </div>
 
             {/* RIGHT COLUMN: BIG TOTAL & CHECKOUT TENDER DISPLAY (5 Columns) */}
-            <div className="lg:col-span-5 flex flex-col justify-between space-y-4">
+            <div className="shrink-0 lg:col-span-5 flex flex-col justify-between space-y-4">
               
               {/* Grand Total Highlight Box */}
               <div className="bg-gradient-to-br from-blue-900/90 via-indigo-950 to-slate-900 rounded-3xl p-6 border-2 border-blue-500/40 shadow-2xl flex flex-col justify-between relative overflow-hidden">
