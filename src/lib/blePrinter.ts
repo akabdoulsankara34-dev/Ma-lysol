@@ -186,25 +186,9 @@ class BluetoothPosPrinter {
       // Find valid writable characteristic for printing
       let writeChar: any = null;
 
-      // Try discovering primary services
-      for (const serviceUuid of this.PRINT_SERVICES) {
-        try {
-          const service = await server.getPrimaryService(serviceUuid);
-          const characteristics = await service.getCharacteristics();
-          for (const char of characteristics) {
-            if (char.properties.write || char.properties.writeWithoutResponse) {
-              writeChar = char;
-              break;
-            }
-          }
-          if (writeChar) break;
-        } catch {
-          // Continue searching
-        }
-      }
-
-      // Fallback: enumerate all primary services
-      if (!writeChar) {
+      // FAST DISCOVERY: Get all exposed primary services at once
+      // This is vastly faster than querying sequentially, avoiding timeouts on missing services.
+      try {
         const services = await server.getPrimaryServices();
         for (const service of services) {
           try {
@@ -217,7 +201,28 @@ class BluetoothPosPrinter {
             }
             if (writeChar) break;
           } catch {
-            // ignore
+            // Ignore errors for individual service inspection
+          }
+        }
+      } catch (e) {
+        console.warn("Fast GATT discovery failed, falling back to sequential discovery...", e);
+      }
+
+      // Fallback: sequential discovery if fast discovery didn't find anything
+      if (!writeChar) {
+        for (const serviceUuid of this.PRINT_SERVICES) {
+          try {
+            const service = await server.getPrimaryService(serviceUuid);
+            const characteristics = await service.getCharacteristics();
+            for (const char of characteristics) {
+              if (char.properties.write || char.properties.writeWithoutResponse) {
+                writeChar = char;
+                break;
+              }
+            }
+            if (writeChar) break;
+          } catch {
+            // Continue searching
           }
         }
       }
