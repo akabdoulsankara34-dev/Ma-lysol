@@ -53,6 +53,7 @@ export const RemoteLiveMonitor: React.FC = () => {
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
   const [selectedCashierFilter, setSelectedCashierFilter] = useState<string>('all');
   const [selectedMethodFilter, setSelectedMethodFilter] = useState<string>('all');
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<'all' | 'active' | 'cancelled'>('all');
   const [newSaleAlert, setNewSaleAlert] = useState<Sale | null>(null);
 
   const prevSalesCountRef = useRef<number>(sales.length);
@@ -87,7 +88,9 @@ export const RemoteLiveMonitor: React.FC = () => {
   const todayStats = useMemo(() => {
     const todayStr = new Date().toISOString().split('T')[0];
 
-    const todaySales = sales.filter(s => s.createdAt.startsWith(todayStr));
+    const todayAllSales = sales.filter(s => s.createdAt.startsWith(todayStr));
+    const todaySales = todayAllSales.filter(s => s.status !== 'cancelled');
+    const todayCancelledSales = todayAllSales.filter(s => s.status === 'cancelled');
     const todayExpenses = expenses.filter(e => e.createdAt.startsWith(todayStr));
     const todayCustomerPayments = customerPayments.filter(p => p.createdAt.startsWith(todayStr));
 
@@ -96,6 +99,9 @@ export const RemoteLiveMonitor: React.FC = () => {
     const totalExp = todayExpenses.reduce((acc, e) => acc + e.amount, 0);
     const grossMargin = totalRevenue - totalCost;
     const estimatedNetProfit = grossMargin - totalExp;
+
+    const cancelledCount = todayCancelledSales.length;
+    const cancelledAmount = todayCancelledSales.reduce((acc, s) => acc + s.total, 0);
 
     // Payment methods breakdown
     let cashSales = 0;
@@ -171,6 +177,10 @@ export const RemoteLiveMonitor: React.FC = () => {
 
     return {
       todaySales,
+      todayAllSales,
+      todayCancelledSales,
+      cancelledCount,
+      cancelledAmount,
       todayExpenses,
       todayCustomerPayments,
       totalRevenue,
@@ -194,12 +204,16 @@ export const RemoteLiveMonitor: React.FC = () => {
 
   // Filtered live feed sales
   const filteredFeedSales = useMemo(() => {
-    return todayStats.todaySales.filter(sale => {
+    return todayStats.todayAllSales.filter(sale => {
       const matchCashier = selectedCashierFilter === 'all' || sale.sellerId === selectedCashierFilter;
       const matchMethod = selectedMethodFilter === 'all' || sale.paymentMethod === selectedMethodFilter;
-      return matchCashier && matchMethod;
+      const matchStatus = 
+        selectedStatusFilter === 'all' ? true :
+        selectedStatusFilter === 'active' ? sale.status !== 'cancelled' :
+        sale.status === 'cancelled';
+      return matchCashier && matchMethod && matchStatus;
     });
-  }, [todayStats.todaySales, selectedCashierFilter, selectedMethodFilter]);
+  }, [todayStats.todayAllSales, selectedCashierFilter, selectedMethodFilter, selectedStatusFilter]);
 
   // Generate WhatsApp Executive Flash Report for the Owner
   const handleGenerateWhatsAppReport = () => {
@@ -470,7 +484,17 @@ _Généré en direct par BizPilot Burkina Faso_`;
             </div>
 
             {/* Filters */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                value={selectedStatusFilter}
+                onChange={(e) => setSelectedStatusFilter(e.target.value as any)}
+                className="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="all">Tous statuts</option>
+                <option value="active">Actives ({todayStats.todaySales.length})</option>
+                <option value="cancelled">Annulées ({todayStats.cancelledCount})</option>
+              </select>
+
               <select
                 value={selectedCashierFilter}
                 onChange={(e) => setSelectedCashierFilter(e.target.value)}
@@ -497,6 +521,24 @@ _Généré en direct par BizPilot Burkina Faso_`;
             </div>
           </div>
 
+          {/* Cancellation Alert Banner */}
+          {todayStats.cancelledCount > 0 && (
+            <div className="px-4 py-2.5 bg-rose-50 border-b border-rose-100 flex items-center justify-between text-xs text-rose-900">
+              <div className="flex items-center space-x-2">
+                <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+                <span>
+                  <strong>{todayStats.cancelledCount} vente(s) annulée(s) aujourd'hui</strong> (-{todayStats.cancelledAmount.toLocaleString()} {business.currency})
+                </span>
+              </div>
+              <button
+                onClick={() => setSelectedStatusFilter('cancelled')}
+                className="underline font-bold text-rose-800 hover:text-rose-950 cursor-pointer text-[11px]"
+              >
+                Filtrer annulations
+              </button>
+            </div>
+          )}
+
           {/* Sales Feed List */}
           <div className="p-4 space-y-3 max-h-[550px] overflow-y-auto scrollbar-thin divide-y divide-slate-100">
             {filteredFeedSales.length === 0 ? (
@@ -507,43 +549,56 @@ _Généré en direct par BizPilot Burkina Faso_`;
               </div>
             ) : (
               filteredFeedSales.map((sale, index) => {
+                const isCancelled = sale.status === 'cancelled';
                 const saleTime = new Date(sale.createdAt);
                 const timeDiff = Math.floor((currentTime.getTime() - saleTime.getTime()) / 60000);
-                const isRecent = timeDiff < 3;
+                const isRecent = timeDiff < 3 && !isCancelled;
 
                 return (
                   <div 
                     key={sale.id}
                     onClick={() => setSelectedSale(sale)}
                     className={`pt-3 first:pt-0 p-3 rounded-xl hover:bg-slate-50 transition cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 border ${
-                      isRecent ? 'bg-blue-50/40 border-blue-200' : 'border-transparent'
+                      isCancelled
+                        ? 'bg-rose-50/40 border-rose-200'
+                        : isRecent 
+                          ? 'bg-blue-50/40 border-blue-200' 
+                          : 'border-transparent'
                     }`}
                   >
                     <div className="flex items-start space-x-3">
                       <div className={`h-10 w-10 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 ${
-                        isRecent ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700'
+                        isCancelled
+                          ? 'bg-rose-100 text-rose-700'
+                          : isRecent 
+                            ? 'bg-blue-600 text-white' 
+                            : 'bg-slate-100 text-slate-700'
                       }`}>
                         #{sale.receiptNumber.split('-').pop() || index + 1}
                       </div>
 
                       <div className="space-y-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-bold text-slate-900 text-xs sm:text-sm">
+                          <span className={`font-bold text-xs sm:text-sm ${isCancelled ? 'line-through text-slate-400' : 'text-slate-900'}`}>
                             {sale.receiptNumber}
                           </span>
                           {getMethodBadge(sale.paymentMethod)}
-                          {isRecent && (
+                          {isCancelled ? (
+                            <span className="bg-red-600 text-white text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase">
+                              Annulée
+                            </span>
+                          ) : isRecent ? (
                             <span className="bg-blue-600 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-full uppercase">
                               Récent
                             </span>
-                          )}
+                          ) : null}
                         </div>
 
-                        <p className="text-xs text-slate-600">
+                        <p className={`text-xs ${isCancelled ? 'text-slate-400' : 'text-slate-600'}`}>
                           {sale.items.map(item => `${item.quantity}x ${item.productName}`).join(' • ')}
                         </p>
 
-                        <div className="flex items-center gap-3 text-[11px] text-slate-500">
+                        <div className="flex items-center gap-3 text-[11px] text-slate-500 flex-wrap">
                           <span className="font-medium text-slate-700">Caissier : <strong>{sale.sellerName}</strong></span>
                           <span>•</span>
                           <span>Client : {sale.customerName || 'Comptoir'}</span>
@@ -554,11 +609,19 @@ _Généré en direct par BizPilot Burkina Faso_`;
                             </>
                           )}
                         </div>
+
+                        {isCancelled && sale.cancellationReason && (
+                          <div className="mt-1 text-[11px] bg-white/80 border border-rose-200 text-rose-800 px-2 py-1 rounded-lg">
+                            <span className="font-bold">Motif d'annulation : </span>
+                            <span className="italic">"{sale.cancellationReason}"</span>
+                            {sale.cancelledByName && <span className="text-slate-500"> (par {sale.cancelledByName})</span>}
+                          </div>
+                        )}
                       </div>
                     </div>
 
                     <div className="sm:text-right flex sm:flex-col items-center sm:items-end justify-between border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100">
-                      <p className="text-base font-black text-slate-900">
+                      <p className={`text-base font-black ${isCancelled ? 'text-rose-600 line-through' : 'text-slate-900'}`}>
                         {sale.total.toLocaleString()} <span className="text-xs text-slate-500">{business.currency}</span>
                       </p>
                       <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">

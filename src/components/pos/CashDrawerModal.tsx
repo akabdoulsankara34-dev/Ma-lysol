@@ -39,6 +39,10 @@ export const CashDrawerModal: React.FC<CashDrawerModalProps> = ({ onClose, opera
 
   useEffect(() => {
     setLogs(cashDrawerService.getLogs());
+    // Fast pre-warm BLE connection in background
+    blePrinter.ensureConnected().then(() => {
+      setBleDeviceName(blePrinter.getConnectedDeviceName());
+    });
   }, []);
 
   const handleToggleAutoOpen = (val: boolean) => {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Sale, Business } from '../../types';
 import { 
   X, 
@@ -15,21 +15,44 @@ import {
   Wifi,
   AlertCircle,
   Check,
-  Unlock
+  Unlock,
+  RotateCcw,
+  ExternalLink,
+  FileText
 } from 'lucide-react';
 import { blePrinter, EscPosEncoder } from '../../lib/blePrinter';
 import { cashDrawerService } from '../../lib/cashDrawerService';
+import { CancelSaleModal } from './CancelSaleModal';
+import { printReceipt, downloadReceipt, openReceiptInNewTab, generateReceiptHtml } from '../../lib/receiptPrinter';
 
 interface ReceiptModalProps {
   sale: Sale;
   business: Business;
   onClose: () => void;
+  onCancelSale?: (saleId: string, reason: string) => Promise<void>;
 }
 
-export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onClose }) => {
+export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onClose, onCancelSale }) => {
   const [isBlePrinting, setIsBlePrinting] = useState(false);
+  const [isPrinting, setIsPrinting] = useState(false);
   const [isDrawerOpening, setIsDrawerOpening] = useState(false);
   const [bleStatus, setBleStatus] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+  const [printFallback, setPrintFallback] = useState<{ blobUrl?: string; message?: string } | null>(null);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [bleDeviceName, setBleDeviceName] = useState<string | null>(blePrinter.getConnectedDeviceName());
+
+  // Fast Pre-warm: Silently prepare Bluetooth connection in background while receipt is viewed
+  useEffect(() => {
+    let isMounted = true;
+    blePrinter.ensureConnected().then(() => {
+      if (isMounted) {
+        setBleDeviceName(blePrinter.getConnectedDeviceName());
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleOpenDrawer = async () => {
     setIsDrawerOpening(true);
@@ -62,8 +85,38 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
     }
   };
 
-  const handlePrint = () => {
-    window.print();
+  // Robust universal print handler (Thermal POS-80 / POS-58 / Standard / PDF)
+  const handlePrint = async () => {
+    setIsPrinting(true);
+    setPrintFallback(null);
+    try {
+      const result = await printReceipt(sale, business, { paperWidth: '80mm' });
+      if (result.success) {
+        setBleStatus({ type: 'success', message: 'Boîte d\'impression ouverte avec succès !' });
+        setTimeout(() => setBleStatus(null), 3500);
+      } else {
+        setPrintFallback({
+          blobUrl: result.blobUrl,
+          message: result.message || "L'environnement d'affichage restreint l'ouverture directe de l'impression."
+        });
+        setBleStatus({
+          type: 'info',
+          message: 'Cliquez ci-dessous pour ouvrir le ticket dans un nouvel onglet ou le télécharger.'
+        });
+      }
+    } catch (err: any) {
+      console.error('Erreur lors de l\'impression du reçu:', err);
+      const html = generateReceiptHtml(sale, business);
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const blobUrl = URL.createObjectURL(blob);
+      setPrintFallback({
+        blobUrl,
+        message: "L'impression directe a été bloquée par le navigateur. Ouvrez le ticket dans un nouvel onglet :"
+      });
+      setBleStatus({ type: 'error', message: "Impression bloquée par les sécurités du navigateur." });
+    } finally {
+      setIsPrinting(false);
+    }
   };
 
   // Direct Bluetooth Thermal Printing for POS80 / POS58 BLE Printers
@@ -89,6 +142,17 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
       
       if (business.ifu) {
         encoder.textLine(`IFU : ${business.ifu}`);
+      }
+
+      if (sale.status === 'cancelled') {
+        encoder.divider('!', 42)
+          .align('center')
+          .bold(true)
+          .textLine('*** TICKET ANNULE ***')
+          .bold(false)
+          .textLine(`Motif : ${(sale.cancellationReason || '').slice(0, 34)}`)
+          .textLine(`Par : ${(sale.cancelledByName || 'Caissier').slice(0, 34)}`)
+          .divider('!', 42);
       }
 
       encoder.divider('-', 42)
@@ -219,6 +283,24 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
               {business.ifu && <p className="text-[10px] text-slate-500">N° IFU : {business.ifu}</p>}
             </div>
 
+            {/* Cancelled Banner if applicable */}
+            {sale.status === 'cancelled' && (
+              <div className="bg-red-50 border border-red-300 rounded-lg p-2.5 text-center text-red-800 space-y-1">
+                <div className="flex items-center justify-center space-x-1.5 font-black text-xs uppercase tracking-wide text-red-700">
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  <span>*** TICKET ANNULÉ ***</span>
+                </div>
+                <p className="text-[11px] font-medium text-slate-800">
+                  Motif : <span className="italic font-bold">{sale.cancellationReason || 'Non spécifié'}</span>
+                </p>
+                {sale.cancelledAt && (
+                  <p className="text-[10px] text-slate-500">
+                    Annulé le {new Date(sale.cancelledAt).toLocaleDateString('fr-FR')} par {sale.cancelledByName || 'Caissier'}
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Meta Info */}
             <div className="space-y-1 text-[11px] text-slate-600 pb-2 border-b border-dashed border-slate-300">
               <div className="flex justify-between">
@@ -328,8 +410,12 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
               type="button"
               disabled={isBlePrinting}
               onClick={handleBlePrint}
-              className="flex items-center justify-center space-x-1 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white py-2.5 px-1.5 rounded-xl font-bold text-xs shadow-xs transition disabled:opacity-50 cursor-pointer"
-              title="Impression sans fil directe sur Imprimante POS-80 Bluetooth"
+              className={`flex items-center justify-center space-x-1 py-2.5 px-1.5 rounded-xl font-bold text-xs shadow-xs transition disabled:opacity-50 cursor-pointer ${
+                blePrinter.isConnected()
+                  ? 'bg-blue-600 hover:bg-blue-700 text-white ring-2 ring-blue-300'
+                  : 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white'
+              }`}
+              title={bleDeviceName ? `Imprimer sur ${bleDeviceName}` : "Impression sans fil directe sur Imprimante POS-80 Bluetooth"}
             >
               <Bluetooth className={`h-4 w-4 ${isBlePrinting ? 'animate-spin' : ''}`} />
               <span className="truncate">POS80</span>
@@ -349,14 +435,121 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
             <button
               id="btn-print-receipt"
               type="button"
+              disabled={isPrinting}
               onClick={handlePrint}
-              className="flex items-center justify-center space-x-1 bg-slate-800 hover:bg-slate-900 active:bg-black text-white py-2.5 px-1.5 rounded-xl font-bold text-xs shadow-xs transition cursor-pointer"
-              title="Imprimer via le navigateur ou PDF"
+              className="flex items-center justify-center space-x-1 bg-slate-900 hover:bg-black active:bg-slate-950 text-white py-2.5 px-1.5 rounded-xl font-bold text-xs shadow-xs transition cursor-pointer disabled:opacity-50"
+              title="Imprimer via le navigateur ou imprimante de caisse thermique (80mm / 58mm / USB)"
             >
-              <Printer className="h-4 w-4 text-slate-200" />
-              <span className="truncate">Imprimer</span>
+              <Printer className={`h-4 w-4 text-slate-200 ${isPrinting ? 'animate-spin' : ''}`} />
+              <span className="truncate">{isPrinting ? 'Envoi...' : 'Imprimer'}</span>
             </button>
           </div>
+
+          {/* Sandbox / Browser Print Restriction Fallback Banner */}
+          {printFallback && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2 animate-in fade-in">
+              <div className="flex items-start space-x-2 text-amber-900 text-xs">
+                <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="leading-snug">
+                  <p className="font-bold">Impression directe restreinte</p>
+                  <p className="text-[11px] text-amber-800">
+                    Votre navigateur bloque la boîte d'impression directe dans cet affichage. Utilisez les boutons ci-dessous :
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => openReceiptInNewTab(sale, business)}
+                  className="flex items-center justify-center space-x-1.5 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white py-2 px-2 rounded-lg font-bold text-[11px] transition shadow-2xs cursor-pointer"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  <span>Ouvrir & Imprimer</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => downloadReceipt(sale, business)}
+                  className="flex items-center justify-center space-x-1.5 bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 py-2 px-2 rounded-lg font-bold text-[11px] transition shadow-2xs cursor-pointer"
+                >
+                  <Download className="h-3.5 w-3.5 text-slate-600" />
+                  <span>Télécharger Reçu</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Additional Quick Utility Actions (Download & Direct Tab) */}
+          <div className="flex items-center justify-end space-x-3 px-1 text-[11px] text-slate-500 pt-0.5">
+            <button
+              type="button"
+              onClick={() => openReceiptInNewTab(sale, business)}
+              className="inline-flex items-center space-x-1 text-slate-600 hover:text-slate-900 transition cursor-pointer"
+              title="Ouvrir le reçu seul dans un nouvel onglet"
+            >
+              <ExternalLink className="h-3 w-3 text-slate-400" />
+              <span>Ouvrir l'onglet</span>
+            </button>
+            <span className="text-slate-300">•</span>
+            <button
+              type="button"
+              onClick={() => downloadReceipt(sale, business)}
+              className="inline-flex items-center space-x-1 text-slate-600 hover:text-slate-900 transition cursor-pointer"
+              title="Télécharger une copie du reçu sur votre appareil"
+            >
+              <Download className="h-3 w-3 text-slate-400" />
+              <span>Télécharger</span>
+            </button>
+          </div>
+
+          {/* Bluetooth Printer Indicator & Instant Coupling Action */}
+          <div className="flex items-center justify-between px-1 text-[11px] text-slate-500 pt-0.5">
+            <div className="flex items-center space-x-1.5 truncate">
+              <span className={`h-2 w-2 rounded-full shrink-0 ${
+                blePrinter.isConnected() 
+                  ? 'bg-emerald-500 animate-pulse' 
+                  : blePrinter.hasPairedPrinter() 
+                    ? 'bg-blue-500' 
+                    : 'bg-slate-300'
+              }`} />
+              <span className="truncate">
+                {blePrinter.isConnected() 
+                  ? `Connectée : ${blePrinter.getConnectedDeviceName()}`
+                  : blePrinter.hasPairedPrinter()
+                    ? `Prête : ${blePrinter.getLastPairedDeviceName()} (Reconnexion < 0.5s)`
+                    : 'Imprimante POS-80 non couplée'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const dev = await blePrinter.connect(true);
+                  setBleDeviceName(dev.name);
+                  setBleStatus({ type: 'success', message: `Imprimante couplée : ${dev.name}` });
+                  setTimeout(() => setBleStatus(null), 3000);
+                } catch (e: any) {
+                  setBleStatus({ type: 'error', message: e.message || 'Erreur couplage' });
+                }
+              }}
+              className="text-blue-600 hover:text-blue-800 font-medium shrink-0 cursor-pointer underline text-[10px] ml-2"
+            >
+              {blePrinter.hasPairedPrinter() ? 'Changer' : 'Coupler'}
+            </button>
+          </div>
+
+          {/* Cancel Sale Action if eligible */}
+          {sale.status !== 'cancelled' && onCancelSale && (
+            <button
+              id="btn-cancel-sale-from-receipt"
+              type="button"
+              onClick={() => setShowCancelModal(true)}
+              className="w-full py-2 bg-red-50 hover:bg-red-100 active:bg-red-200 text-red-700 border border-red-200 rounded-xl font-bold text-xs flex items-center justify-center space-x-1.5 transition cursor-pointer"
+              title="Annuler cette vente et réintégrer les articles en stock avec justification"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              <span>Annuler cette vente (Justification caisse)</span>
+            </button>
+          )}
 
           <button
             id="btn-close-receipt"
@@ -369,6 +562,20 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
         </div>
 
       </div>
+
+      {/* Cancel Sale Modal with justification */}
+      {showCancelModal && onCancelSale && (
+        <CancelSaleModal
+          sale={sale}
+          business={business}
+          onClose={() => setShowCancelModal(false)}
+          onConfirmCancel={async (saleId, reason) => {
+            await onCancelSale(saleId, reason);
+            setShowCancelModal(false);
+            onClose();
+          }}
+        />
+      )}
     </div>
   );
 };

@@ -60,6 +60,10 @@
         "paymentMethod": { "type": "string" },
         "paymentBreakdown": { "type": "object" },
         "status": { "type": "string" },
+        "cancelledAt": { "type": "string", "format": "date-time" },
+        "cancelledBy": { "type": "string" },
+        "cancelledByName": { "type": "string" },
+        "cancellationReason": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["businessId", "receiptNumber", "total", "paymentMethod", "items"]

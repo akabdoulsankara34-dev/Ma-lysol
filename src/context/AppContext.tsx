@@ -154,6 +154,7 @@ interface AppContextType {
     notes?: string,
     loyaltyPointsToRedeem?: number
   ) => Promise<Sale>;
+  cancelSale: (saleId: string, reason: string) => Promise<void>;
 
   // Customers, Debts & Loyalty
   customers: Customer[];
@@ -202,6 +203,8 @@ interface AppContextType {
   // Navigation & Platform Admin
   activeTab: NavigationTab;
   setActiveTab: (tab: NavigationTab) => void;
+  isMobileDrawerOpen: boolean;
+  setIsMobileDrawerOpen: (open: boolean) => void;
   isPlatformAdminUnlocked: boolean;
   showAdminPinModal: boolean;
   setShowAdminPinModal: (show: boolean) => void;
@@ -308,7 +311,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [cart, setCart] = useState<CartItem[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [activeTab, setActiveTab] = useState<NavigationTab>('pos');
+  const [activeTab, setActiveTabRaw] = useState<NavigationTab>('pos');
+  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState<boolean>(false);
+
+  const setActiveTab = useCallback((tab: NavigationTab) => {
+    setActiveTabRaw(tab);
+    setIsMobileDrawerOpen(false);
+  }, []);
+
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(new Date());
@@ -1566,6 +1576,163 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newSale;
   };
 
+  // Cancel an existing sale with justification, restoring stock and adjusting accounts
+  const cancelSale = async (saleId: string, reason: string): Promise<void> => {
+    const trimmedReason = reason?.trim();
+    if (!trimmedReason) {
+      throw new Error("Une justification ou un motif d'annulation est obligatoire.");
+    }
+
+    const targetSale = sales.find(s => s.id === saleId);
+    if (!targetSale) {
+      throw new Error("Vente introuvable.");
+    }
+
+    if (targetSale.status === 'cancelled') {
+      throw new Error("Cette vente a déjà été annulée.");
+    }
+
+    const nowIso = new Date().toISOString();
+
+    // 1. Update sale record with cancellation details
+    const updatedSale: Sale = {
+      ...targetSale,
+      status: 'cancelled',
+      cancelledAt: nowIso,
+      cancelledBy: currentUser.id,
+      cancelledByName: currentUser.name,
+      cancellationReason: trimmedReason,
+    };
+
+    setSales(prev => prev.map(s => s.id === saleId ? updatedSale : s));
+
+    // 2. Re-increment product stocks and record reverse stock movements
+    const updatedProducts = [...products];
+    const newMovements: StockMovement[] = [];
+
+    targetSale.items.forEach(item => {
+      const prodIndex = updatedProducts.findIndex(p => p.id === item.productId);
+      if (prodIndex >= 0) {
+        const p = updatedProducts[prodIndex];
+        const prevStock = p.currentStock;
+        const nextStock = prevStock + item.quantity;
+        updatedProducts[prodIndex] = { ...p, currentStock: nextStock };
+
+        newMovements.push({
+          id: `mov_cancel_${Date.now()}_${item.productId}`,
+          businessId: business.id,
+          productId: item.productId,
+          productName: item.productName,
+          type: 'return_customer',
+          quantity: item.quantity,
+          previousStock: prevStock,
+          newStock: nextStock,
+          reason: `Annulation Vente Ticket #${targetSale.receiptNumber} (${trimmedReason})`,
+          userId: currentUser.id,
+          userName: currentUser.name,
+          createdAt: nowIso,
+        });
+      }
+    });
+
+    setProducts(updatedProducts);
+    setStockMovements(prev => [...newMovements, ...prev]);
+
+    // 3. Reverse customer credit / debt and loyalty if applicable
+    if (targetSale.customerId) {
+      const targetCustomer = customers.find(c => c.id === targetSale.customerId);
+      if (targetCustomer) {
+        let creditDeduction = 0;
+        if (targetSale.paymentMethod === 'credit') {
+          creditDeduction = targetSale.total;
+        } else if (targetSale.paymentBreakdown && (targetSale.paymentBreakdown.credit || 0) > 0) {
+          creditDeduction = targetSale.paymentBreakdown.credit || 0;
+        }
+
+        const newDebt = Math.max(0, targetCustomer.totalDebt - creditDeduction);
+        const newSpent = Math.max(0, (targetCustomer.totalSpent || 0) - targetSale.total);
+        const newPoints = Math.max(
+          0,
+          (targetCustomer.loyaltyPoints || 0) - (targetSale.loyaltyPointsEarned || 0) + (targetSale.loyaltyPointsUsed || 0)
+        );
+
+        let loyaltyTier: Customer['loyaltyTier'] = 'Bronze';
+        if (newSpent >= 500000) loyaltyTier = 'VIP';
+        else if (newSpent >= 250000) loyaltyTier = 'Gold';
+        else if (newSpent >= 100000) loyaltyTier = 'Silver';
+
+        const updatedCustomer: Customer = {
+          ...targetCustomer,
+          totalDebt: newDebt,
+          totalSpent: newSpent,
+          loyaltyPoints: newPoints,
+          loyaltyTier,
+        };
+
+        setCustomers(prev => prev.map(c => c.id === targetSale.customerId ? updatedCustomer : c));
+
+        syncMutation('customers', targetSale.customerId, 'update', {
+          totalDebt: newDebt,
+          totalSpent: newSpent,
+          loyaltyPoints: newPoints,
+          loyaltyTier,
+        }, `Annulation vente client ${targetCustomer.name}`);
+      }
+    }
+
+    // 4. Reverse active cash session amounts if open
+    if (activeCashSession) {
+      const cashAmount = targetSale.paymentMethod === 'cash' ? targetSale.total : (targetSale.paymentBreakdown?.cash || 0);
+      const omAmount = targetSale.paymentMethod === 'orange_money' ? targetSale.total : (targetSale.paymentBreakdown?.orangeMoney || 0);
+      const moovAmount = targetSale.paymentMethod === 'moov_money' ? targetSale.total : (targetSale.paymentBreakdown?.moovMoney || 0);
+      const waveAmount = targetSale.paymentMethod === 'wave_coris' ? targetSale.total : (targetSale.paymentBreakdown?.waveCoris || 0);
+      const creditAmount = targetSale.paymentMethod === 'credit' ? targetSale.total : (targetSale.paymentBreakdown?.credit || 0);
+
+      const updatedSession: CashSession = {
+        ...activeCashSession,
+        totalCashSales: Math.max(0, activeCashSession.totalCashSales - cashAmount),
+        totalOrangeMoneySales: Math.max(0, activeCashSession.totalOrangeMoneySales - omAmount),
+        totalMoovMoneySales: Math.max(0, activeCashSession.totalMoovMoneySales - moovAmount),
+        totalWaveSales: Math.max(0, activeCashSession.totalWaveSales - waveAmount),
+        totalCreditSales: Math.max(0, activeCashSession.totalCreditSales - creditAmount),
+        expectedCashInDrawer: Math.max(0, activeCashSession.expectedCashInDrawer - cashAmount),
+      };
+
+      setCashSessions(prev => prev.map(cs => cs.id === activeCashSession.id ? updatedSession : cs));
+      syncMutation('cash_sessions', activeCashSession.id, 'update', updatedSession, `Annulation Ticket #${targetSale.receiptNumber}`);
+    }
+
+    // 5. Asynchronously persist changes to Firestore
+    (async () => {
+      const syncTasks: Promise<any>[] = [
+        syncMutation('sales', saleId, 'update', {
+          status: 'cancelled',
+          cancelledAt: nowIso,
+          cancelledBy: currentUser.id,
+          cancelledByName: currentUser.name,
+          cancellationReason: trimmedReason,
+        }, `Annulation Vente Ticket #${targetSale.receiptNumber}`)
+      ];
+
+      for (const p of updatedProducts) {
+        const itemInSale = targetSale.items.find(si => si.productId === p.id);
+        if (itemInSale) {
+          syncTasks.push(
+            syncMutation('products', p.id, 'update', { currentStock: p.currentStock }, `Restock ${p.name}`)
+          );
+        }
+      }
+
+      for (const mov of newMovements) {
+        syncTasks.push(
+          syncMutation('stock_movements', mov.id, 'set', mov, `Retour stock ${mov.productName}`)
+        );
+      }
+
+      await Promise.allSettled(syncTasks);
+    })().catch(err => console.warn('[Fast Sale Cancellation Sync Notice]:', err));
+  };
+
   // Add Product
   const addProduct = async (productData: Omit<Product, 'id' | 'businessId' | 'createdAt'>): Promise<Product> => {
     const id = `prod_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
@@ -2071,8 +2238,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let weekSales = 0;
     let monthSales = 0;
     let monthProfit = 0;
+    let cancelledSalesCount = 0;
+    let cancelledSalesAmount = 0;
 
     scopedSales.forEach(sale => {
+      if (sale.status === 'cancelled') {
+        cancelledSalesCount += 1;
+        cancelledSalesAmount += sale.total;
+        return;
+      }
+
       const saleDate = new Date(sale.createdAt);
       const saleDateStr = sale.createdAt.split('T')[0];
 
@@ -2127,6 +2302,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       lowStockCount,
       outOfStockCount,
       expiringProductsCount,
+      cancelledSalesCount,
+      cancelledSalesAmount,
       activeCashSession,
     };
   }, [scopedSales, scopedExpenses, scopedCustomers, scopedProducts, activeCashSession]);
@@ -2191,6 +2368,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         processOfflineQueue,
         activeTab,
         setActiveTab,
+        isMobileDrawerOpen,
+        setIsMobileDrawerOpen,
         isPlatformAdminUnlocked,
         showAdminPinModal,
         setShowAdminPinModal,
@@ -2204,6 +2383,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         removeFromCart,
         clearCart,
         completeSale,
+        cancelSale,
         addProduct,
         updateProduct,
         archiveProduct,

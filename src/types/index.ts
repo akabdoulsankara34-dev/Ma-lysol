@@ -141,6 +141,11 @@ export interface Sale {
   loyaltyPointsEarned?: number;
   quotationId?: string;
   notes?: string;
+  status?: 'completed' | 'cancelled';
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancelledByName?: string;
+  cancellationReason?: string;
   createdAt: string;
 }
 
@@ -308,6 +313,8 @@ export interface BusinessSummary {
   lowStockCount: number;
   outOfStockCount: number;
   expiringProductsCount?: number;
+  cancelledSalesCount?: number;
+  cancelledSalesAmount?: number;
   activeCashSession?: CashSession | null;
 }
 

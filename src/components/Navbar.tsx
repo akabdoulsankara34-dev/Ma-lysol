@@ -16,7 +16,8 @@ import {
   Building2,
   LogOut,
   KeyRound,
-  RefreshCw
+  RefreshCw,
+  Menu
 } from 'lucide-react';
 
 export const Navbar: React.FC = () => {
@@ -39,7 +40,9 @@ export const Navbar: React.FC = () => {
     cart,
     handleLogoClick,
     isPlatformAdminUnlocked,
-    lockPlatformAdmin
+    lockPlatformAdmin,
+    isMobileDrawerOpen,
+    setIsMobileDrawerOpen
   } = useApp();
 
   const [showUserDropdown, setShowUserDropdown] = useState(false);
@@ -66,34 +69,47 @@ export const Navbar: React.FC = () => {
     <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-          {/* Logo & Store Info (Triple click triggers Super Admin Mode) */}
-          <div 
-            id="bizpilot-brand-logo"
-            onClick={handleLogoClick}
-            className="flex items-center space-x-3 cursor-pointer select-none group active:scale-98 transition-transform"
-            title="BizPilot Burkina Faso (Triple-cliquez pour l'accès Administrateur Plateforme)"
-          >
-            <div className="h-10 w-10 rounded-xl bg-blue-600 group-hover:bg-blue-700 flex items-center justify-center text-white shadow-sm shadow-blue-500/20 transition">
-              <Store className="h-5 w-5" />
-            </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <span className="font-bold text-slate-900 text-base sm:text-lg tracking-tight group-hover:text-blue-600 transition">
-                  BizPilot <span className="text-blue-600 font-extrabold">BF</span>
-                </span>
-                <span className="font-mono text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-md">
-                  {business.accessCode}
-                </span>
-                {isPlatformAdminUnlocked && (
-                  <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-extrabold bg-blue-600 text-white px-2 py-0.5 rounded-full shadow-xs">
-                    <ShieldCheck className="h-3 w-3" />
-                    Admin
-                  </span>
-                )}
+          <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
+            {/* Mobile Hamburger Drawer Trigger */}
+            <button
+              id="btn-navbar-mobile-menu"
+              type="button"
+              onClick={() => setIsMobileDrawerOpen(true)}
+              className="lg:hidden p-2 -ml-1 text-slate-700 hover:text-blue-600 hover:bg-slate-100 rounded-xl transition cursor-pointer shrink-0"
+              aria-label="Ouvrir le menu principal"
+            >
+              <Menu className="h-6 w-6" />
+            </button>
+
+            {/* Logo & Store Info (Triple click triggers Super Admin Mode) */}
+            <div 
+              id="bizpilot-brand-logo"
+              onClick={handleLogoClick}
+              className="flex items-center space-x-2 sm:space-x-3 cursor-pointer select-none group active:scale-98 transition-transform min-w-0"
+              title="BizPilot Burkina Faso (Triple-cliquez pour l'accès Administrateur Plateforme)"
+            >
+              <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl bg-blue-600 group-hover:bg-blue-700 flex items-center justify-center text-white shadow-sm shadow-blue-500/20 transition shrink-0">
+                <Store className="h-5 w-5" />
               </div>
-              <p className="text-xs text-slate-500 truncate max-w-[180px] sm:max-w-xs">
-                {business.name} • {business.city.split('(')[0].trim()}
-              </p>
+              <div className="min-w-0">
+                <div className="flex items-center space-x-1.5 sm:space-x-2">
+                  <span className="font-bold text-slate-900 text-sm sm:text-lg tracking-tight group-hover:text-blue-600 transition truncate">
+                    BizPilot <span className="text-blue-600 font-extrabold">BF</span>
+                  </span>
+                  <span className="font-mono text-[10px] sm:text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200 px-1.5 sm:px-2 py-0.5 rounded-md shrink-0">
+                    {business.accessCode}
+                  </span>
+                  {isPlatformAdminUnlocked && (
+                    <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-extrabold bg-blue-600 text-white px-2 py-0.5 rounded-full shadow-xs">
+                      <ShieldCheck className="h-3 w-3" />
+                      Admin
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] sm:text-xs text-slate-500 truncate max-w-[130px] sm:max-w-xs">
+                  {business.name} • {business.city.split('(')[0].trim()}
+                </p>
+              </div>
             </div>
           </div>
 
@@ -168,7 +184,7 @@ export const Navbar: React.FC = () => {
 
               {/* Notifications Dropdown */}
               {showNotifDropdown && (
-                <div className="origin-top-right absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-xl shadow-xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
+                <div className="origin-top-right absolute right-0 mt-2 w-80 sm:w-96 max-w-[calc(100vw-1.5rem)] bg-white rounded-xl shadow-xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
                   <div className="px-4 py-2 border-b border-slate-100 flex items-center justify-between">
                     <span className="font-semibold text-slate-800 text-sm">Alertes & Notifications</span>
                     {unreadNotifs.length > 0 && (

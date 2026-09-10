@@ -1,5 +1,5 @@
 // BizPilot Burkina - Service Worker Pro (Offline Cache & Sync)
-const CACHE_VERSION = 'bizpilot-v3';
+const CACHE_VERSION = 'bizpilot-v4';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -55,8 +55,16 @@ self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
 
-  // Ignore non-GET requests and Firebase backend API calls (handled by Firebase persistent cache)
-  if (request.method !== 'GET' || isFirebaseApiUrl(request.url)) {
+  // Ignore non-GET requests, Firebase backend API calls, and Vite dev/module assets
+  if (
+    request.method !== 'GET' || 
+    isFirebaseApiUrl(request.url) ||
+    url.pathname.startsWith('/@') ||
+    url.pathname.startsWith('/src/') ||
+    url.pathname.startsWith('/node_modules/') ||
+    url.search.includes('v=') ||
+    url.search.includes('t=')
+  ) {
     return;
   }
 

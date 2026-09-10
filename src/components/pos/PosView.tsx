@@ -31,11 +31,14 @@ import {
   Check,
   Sparkles,
   Tv,
-  Unlock
+  Unlock,
+  RotateCcw,
+  ArrowLeft
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { cashDrawerService } from '../../lib/cashDrawerService';
 import { CashDrawerModal } from './CashDrawerModal';
+import { CancelSaleModal } from './CancelSaleModal';
 
 export const PosView: React.FC = () => {
   const { 
@@ -51,9 +54,11 @@ export const PosView: React.FC = () => {
     sales,
     currentUser,
     completeSale,
+    cancelSale,
     setActiveTab
   } = useApp();
 
+  const [mobilePosTab, setMobilePosTab] = useState<'catalog' | 'cart'>('catalog');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('Tous');
   const [overallDiscount, setOverallDiscount] = useState<number>(0);
@@ -64,6 +69,7 @@ export const PosView: React.FC = () => {
   const [showDisplayGuideModal, setShowDisplayGuideModal] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [viewReceiptFromHistory, setViewReceiptFromHistory] = useState<Sale | null>(null);
+  const [saleToCancel, setSaleToCancel] = useState<Sale | null>(null);
   const [isQuickCheckingOut, setIsQuickCheckingOut] = useState(false);
   const [showCashDrawerModal, setShowCashDrawerModal] = useState(false);
   const [drawerToast, setDrawerToast] = useState<{ reason: string; timestamp: number; hardwareKicked: boolean } | null>(null);
@@ -164,6 +170,7 @@ export const PosView: React.FC = () => {
     setShowCheckoutModal(false);
     setOverallDiscount(0);
     setLastCompletedSale(sale);
+    setMobilePosTab('catalog');
 
     // Broadcast completed sale for 2nd screen celebratory display & change confirmation
     broadcastCustomerDisplay({
@@ -293,10 +300,50 @@ export const PosView: React.FC = () => {
   }, [products, addToCart]);
 
   return (
-    <div className="h-[calc(100vh-4rem)] flex flex-col lg:flex-row overflow-hidden bg-slate-50">
+    <div className="h-[calc(100vh-4rem)] flex flex-col lg:flex-row overflow-hidden bg-slate-50 relative">
       
+      {/* Mobile Top Segmented Tab Switcher (Articles vs Panier) */}
+      <div className="lg:hidden bg-white border-b border-slate-200 px-3 py-2 shrink-0 z-10">
+        <div className="grid grid-cols-2 p-1 bg-slate-100 rounded-xl gap-1">
+          <button
+            id="btn-pos-mobile-tab-catalog"
+            type="button"
+            onClick={() => setMobilePosTab('catalog')}
+            className={`py-2 px-2.5 rounded-lg text-xs font-bold transition flex items-center justify-center space-x-1.5 cursor-pointer ${
+              mobilePosTab === 'catalog'
+                ? 'bg-white text-blue-600 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Package className="h-3.5 w-3.5" />
+            <span>Articles ({filteredProducts.length})</span>
+          </button>
+
+          <button
+            id="btn-pos-mobile-tab-cart"
+            type="button"
+            onClick={() => setMobilePosTab('cart')}
+            className={`py-2 px-2.5 rounded-lg text-xs font-bold transition flex items-center justify-center space-x-1.5 cursor-pointer relative ${
+              mobilePosTab === 'cart'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <ShoppingBag className="h-3.5 w-3.5" />
+            <span>Panier ({totalItemCount})</span>
+            {totalAmount > 0 && (
+              <span className={`text-[10px] ml-1 font-mono font-bold ${mobilePosTab === 'cart' ? 'text-blue-100' : 'text-blue-600'}`}>
+                • {totalAmount > 999 ? `${(totalAmount / 1000).toFixed(0)}k` : totalAmount}
+              </span>
+            )}
+          </button>
+        </div>
+      </div>
+
       {/* LEFT COLUMN: Product Catalog & Search */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden p-3 sm:p-5 border-r border-slate-200">
+      <div className={`flex-1 flex-col h-full overflow-hidden p-3 sm:p-5 border-r border-slate-200 ${
+        mobilePosTab === 'cart' ? 'hidden lg:flex' : 'flex'
+      }`}>
         
         {/* Top Controls: Search Bar, Customer Display & Recent Sales Button */}
         <div className="flex items-center space-x-2 sm:space-x-3 mb-3 shrink-0">
@@ -408,7 +455,7 @@ export const PosView: React.FC = () => {
               <p className="text-xs text-slate-400 mt-1">Essayez un autre mot-clé ou modifiez la catégorie.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2.5 sm:gap-3.5 pb-20 lg:pb-6">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2.5 sm:gap-3 pb-20 lg:pb-6">
               {filteredProducts.map(product => {
                 const inCart = cart.find(item => item.product.id === product.id);
                 const isOutOfStock = product.currentStock <= 0;
@@ -478,26 +525,72 @@ export const PosView: React.FC = () => {
         </div>
       </div>
 
+      {/* Mobile Floating Cart Action Bar (When on catalog tab and cart has items) */}
+      {mobilePosTab === 'catalog' && cart.length > 0 && (
+        <div className="lg:hidden absolute bottom-3 left-3 right-3 z-30 bg-slate-900 text-white p-3 rounded-2xl shadow-2xl border border-slate-800 flex items-center justify-between gap-2 animate-in slide-up duration-200">
+          <div className="min-w-0 cursor-pointer" onClick={() => setMobilePosTab('cart')}>
+            <div className="flex items-center space-x-1.5 text-xs text-slate-300">
+              <ShoppingBag className="h-3.5 w-3.5 text-blue-400" />
+              <span>{totalItemCount} article(s)</span>
+            </div>
+            <p className="font-extrabold text-sm sm:text-base text-white truncate">
+              {totalAmount.toLocaleString()} {business.currency}
+            </p>
+          </div>
+
+          <div className="flex items-center space-x-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={handleQuickCashSale}
+              disabled={isQuickCheckingOut}
+              className="bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center space-x-1 shadow-xs transition cursor-pointer"
+              title="Valider en espèces en 1 clic"
+            >
+              <Zap className="h-3.5 w-3.5 fill-amber-300 text-amber-300" />
+              <span>Cash</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setMobilePosTab('cart')}
+              className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center space-x-1 shadow-xs transition cursor-pointer"
+            >
+              <span>Panier →</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* RIGHT COLUMN: Interactive Cart & Checkout Panel */}
-      <div className="w-full lg:w-96 bg-white border-t lg:border-t-0 lg:border-l border-slate-200 flex flex-col shrink-0 h-auto lg:h-full shadow-lg lg:shadow-none">
+      <div className={`w-full lg:w-64 bg-white border-t lg:border-t-0 lg:border-l border-slate-200 flex-col shrink-0 h-full shadow-lg lg:shadow-none ${
+        mobilePosTab === 'catalog' ? 'hidden lg:flex' : 'flex'
+      }`}>
         
         {/* Cart Header */}
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-          <div className="flex items-center space-x-2">
-            <ShoppingBag className="h-5 w-5 text-blue-600" />
-            <h3 className="font-bold text-slate-900 text-sm sm:text-base">
+        <div className="p-3 sm:p-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+          <div className="flex items-center space-x-1.5 min-w-0">
+            <button
+              type="button"
+              onClick={() => setMobilePosTab('catalog')}
+              className="lg:hidden p-1 -ml-1 text-slate-600 hover:text-blue-600 rounded-lg hover:bg-slate-200 transition cursor-pointer shrink-0"
+              title="Retourner au catalogue d'articles"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <ShoppingBag className="h-4 w-4 text-blue-600 shrink-0" />
+            <h3 className="font-bold text-slate-900 text-xs sm:text-sm truncate">
               Panier en cours
             </h3>
             {totalItemCount > 0 && (
-              <span className="bg-blue-100 text-blue-800 text-xs font-bold px-2 py-0.5 rounded-full">
-                {totalItemCount} article{totalItemCount > 1 ? 's' : ''}
+              <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">
+                {totalItemCount}
               </span>
             )}
           </div>
           {cart.length > 0 && (
             <button
               onClick={clearCart}
-              className="text-xs text-red-600 hover:text-red-700 font-semibold transition"
+              className="text-xs text-red-600 hover:text-red-700 font-semibold transition shrink-0 ml-1 cursor-pointer"
             >
               Vider
             </button>
@@ -505,13 +598,13 @@ export const PosView: React.FC = () => {
         </div>
 
         {/* Cart Items List */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-2 max-h-64 lg:max-h-none">
+        <div className="flex-1 overflow-y-auto p-2 sm:p-2.5 space-y-2">
           {cart.length === 0 ? (
-            <div className="h-48 lg:h-64 flex flex-col items-center justify-center text-slate-400 text-center p-4">
-              <ShoppingBag className="h-10 w-10 mb-2 opacity-30 text-slate-400" />
-              <p className="text-sm font-semibold text-slate-700">Le panier est vide</p>
-              <p className="text-xs text-slate-400 mt-1 max-w-[220px]">
-                Cliquez sur un article du catalogue à gauche pour l'ajouter à la commande.
+            <div className="h-48 lg:h-64 flex flex-col items-center justify-center text-slate-400 text-center p-3">
+              <ShoppingBag className="h-8 w-8 mb-2 opacity-30 text-slate-400" />
+              <p className="text-xs font-bold text-slate-700">Le panier est vide</p>
+              <p className="text-[11px] text-slate-400 mt-1 max-w-[180px]">
+                Sélectionnez un article du catalogue pour l'ajouter.
               </p>
             </div>
           ) : (
@@ -520,57 +613,60 @@ export const PosView: React.FC = () => {
               return (
                 <div
                   key={item.product.id}
-                  className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 flex flex-col space-y-1.5"
+                  className="bg-slate-50 border border-slate-200 rounded-xl p-2 flex flex-col space-y-1.5"
                 >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <p className="font-bold text-xs text-slate-900 leading-tight">{item.product.name}</p>
-                      <div className="flex items-center space-x-2 mt-1">
+                  <div className="flex items-start justify-between gap-1">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-bold text-xs text-slate-900 leading-tight truncate" title={item.product.name}>
+                        {item.product.name}
+                      </p>
+                      <div className="flex items-center space-x-1.5 mt-1 flex-wrap gap-y-1">
                         <select
                           value={item.priceType || 'retail'}
                           onChange={(e) => updateCartItemPriceType(item.product.id, e.target.value as any)}
-                          className="text-[10px] bg-white border border-slate-300 rounded px-1 py-0.5 text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          className="text-[9px] font-medium bg-white border border-slate-300 rounded px-1 py-0.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
                         >
                           <option value="retail">Détail</option>
                           <option value="semi-wholesale">Demi-Gros</option>
                           <option value="wholesale">Gros</option>
                         </select>
-                        <p className="text-[10px] text-slate-500">
-                          {item.unitPrice.toLocaleString()} {business.currency} / {item.product.unit}
+                        <p className="text-[10px] text-slate-500 truncate">
+                          {item.unitPrice.toLocaleString()} {business.currency}
                         </p>
                       </div>
                     </div>
                     <button
                       onClick={() => removeFromCart(item.product.id)}
-                      className="text-slate-400 hover:text-red-600 p-1 transition"
+                      className="text-slate-400 hover:text-red-600 p-0.5 transition shrink-0"
+                      title="Supprimer"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
 
-                  <div className="flex items-center justify-between pt-1">
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">
                     {/* Quantity controls */}
-                    <div className="flex items-center space-x-1.5 bg-white border border-slate-200 rounded-lg p-0.5">
+                    <div className="flex items-center space-x-1 bg-white border border-slate-200 rounded-lg p-0.5">
                       <button
                         onClick={() => updateCartQuantity(item.product.id, item.quantity - 1)}
-                        className="h-6 w-6 rounded flex items-center justify-center text-slate-600 hover:bg-slate-100 transition"
+                        className="h-5 w-5 rounded flex items-center justify-center text-slate-600 hover:bg-slate-100 transition"
                       >
-                        <Minus className="h-3 w-3" />
+                        <Minus className="h-2.5 w-2.5" />
                       </button>
-                      <span className="w-8 text-center text-xs font-bold text-slate-900">
+                      <span className="w-6 text-center text-xs font-bold text-slate-900">
                         {item.quantity}
                       </span>
                       <button
                         onClick={() => updateCartQuantity(item.product.id, item.quantity + 1)}
-                        className="h-6 w-6 rounded flex items-center justify-center text-slate-600 hover:bg-slate-100 transition"
+                        className="h-5 w-5 rounded flex items-center justify-center text-slate-600 hover:bg-slate-100 transition"
                       >
-                        <Plus className="h-3 w-3" />
+                        <Plus className="h-2.5 w-2.5" />
                       </button>
                     </div>
 
                     {/* Subtotal */}
-                    <span className="font-bold text-xs text-slate-900">
-                      {itemTotal.toLocaleString()} {business.currency}
+                    <span className="font-extrabold text-xs text-slate-900">
+                      {itemTotal.toLocaleString()} <span className="text-[10px] font-medium text-slate-500">{business.currency}</span>
                     </span>
                   </div>
                 </div>
@@ -581,62 +677,67 @@ export const PosView: React.FC = () => {
 
         {/* Cart Calculation & Checkout Trigger */}
         {cart.length > 0 && (
-          <div className="p-4 bg-slate-50 border-t border-slate-200 space-y-3">
+          <div className="p-3 bg-slate-50 border-t border-slate-200 space-y-2.5">
             
             {/* Global Discount input */}
             <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-600 font-medium">Remise Globale (FCFA) :</span>
-              <input
-                type="number"
-                min="0"
-                value={overallDiscount || ''}
-                onChange={(e) => setOverallDiscount(Math.max(0, Number(e.target.value)))}
-                placeholder="0"
-                className="w-24 bg-white border border-slate-300 rounded px-2 py-1 text-right text-xs font-bold text-blue-700"
-              />
+              <span className="text-slate-600 font-medium text-[11px]">Remise :</span>
+              <div className="flex items-center space-x-1">
+                <input
+                  type="number"
+                  min="0"
+                  value={overallDiscount || ''}
+                  onChange={(e) => setOverallDiscount(Math.max(0, Number(e.target.value)))}
+                  placeholder="0"
+                  className="w-16 sm:w-20 bg-white border border-slate-300 rounded px-1.5 py-0.5 text-right text-xs font-bold text-blue-700"
+                />
+                <span className="text-[10px] text-slate-400 font-semibold">{business.currency}</span>
+              </div>
             </div>
 
             {/* Subtotal & Total */}
-            <div className="space-y-1 pt-1 border-t border-slate-200">
-              <div className="flex justify-between text-xs text-slate-600">
+            <div className="space-y-1 pt-1 border-t border-slate-200 text-xs">
+              <div className="flex justify-between text-slate-600 text-[11px]">
                 <span>Sous-total :</span>
                 <span>{subtotal.toLocaleString()} {business.currency}</span>
               </div>
               {overallDiscount > 0 && (
-                <div className="flex justify-between text-xs text-blue-700 font-semibold">
-                  <span>Remise déduite :</span>
+                <div className="flex justify-between text-blue-700 font-semibold text-[11px]">
+                  <span>Remise :</span>
                   <span>-{overallDiscount.toLocaleString()} {business.currency}</span>
                 </div>
               )}
-              <div className="flex justify-between text-sm sm:text-base font-black text-slate-950 pt-1">
-                <span>TOTAL À PAYER :</span>
-                <span className="text-blue-700">{totalAmount.toLocaleString()} {business.currency}</span>
+              <div className="flex justify-between items-baseline font-black text-slate-950 pt-1">
+                <span className="text-[11px] uppercase tracking-wider">Total :</span>
+                <span className="text-blue-700 text-sm sm:text-base font-black">
+                  {totalAmount.toLocaleString()} <span className="text-[10px] font-semibold">{business.currency}</span>
+                </span>
               </div>
             </div>
 
-            {/* Fast Action Buttons */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+            {/* Fast Action Buttons - Stacked on desktop to fit 256px width nicely */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-1.5 pt-1">
               <button
                 id="btn-quick-cash-checkout"
                 type="button"
                 disabled={isQuickCheckingOut}
                 onClick={handleQuickCashSale}
-                className="w-full bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 text-white py-3 px-3 rounded-xl font-black text-xs sm:text-sm shadow-md flex items-center justify-center space-x-1.5 transition cursor-pointer"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 text-white py-2.5 px-2.5 rounded-xl font-bold text-xs shadow-xs flex items-center justify-center space-x-1.5 transition cursor-pointer"
                 title="Valider la vente immédiatement en espèces pour Client Comptoir"
               >
-                <Zap className="h-4 w-4 fill-amber-300 text-amber-300" />
-                <span>{isQuickCheckingOut ? 'Validation...' : '⚡ Espèces Direct (1 Clic)'}</span>
+                <Zap className="h-3.5 w-3.5 fill-amber-300 text-amber-300 shrink-0" />
+                <span className="truncate">{isQuickCheckingOut ? 'Validation...' : '⚡ Espèces Direct (1 Clic)'}</span>
               </button>
 
               <button
                 id="btn-open-pos-checkout"
                 type="button"
                 onClick={() => setShowCheckoutModal(true)}
-                className="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white py-3 px-3 rounded-xl font-bold text-xs sm:text-sm shadow-md flex items-center justify-center space-x-1.5 transition cursor-pointer"
+                className="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white py-2.5 px-2.5 rounded-xl font-bold text-xs shadow-xs flex items-center justify-center space-x-1.5 transition cursor-pointer"
                 title="Choisir Orange Money, Moov, Wave, Crédit ou Client"
               >
-                <CreditCard className="h-4 w-4" />
-                <span>Paiements & Options</span>
+                <CreditCard className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">Paiements & Options</span>
               </button>
             </div>
           </div>
@@ -661,6 +762,7 @@ export const PosView: React.FC = () => {
           sale={lastCompletedSale}
           business={business}
           onClose={() => setLastCompletedSale(null)}
+          onCancelSale={cancelSale}
         />
       )}
 
@@ -670,6 +772,7 @@ export const PosView: React.FC = () => {
           sale={viewReceiptFromHistory}
           business={business}
           onClose={() => setViewReceiptFromHistory(null)}
+          onCancelSale={cancelSale}
         />
       )}
 
@@ -693,35 +796,58 @@ export const PosView: React.FC = () => {
               {sales.length === 0 ? (
                 <p className="text-center text-slate-400 text-xs py-8">Aucune vente enregistrée.</p>
               ) : (
-                sales.slice(0, 15).map(sale => (
+                sales.slice(0, 20).map(sale => (
                   <div key={sale.id} className="py-3 flex items-center justify-between text-xs">
-                    <div>
+                    <div className="space-y-0.5">
                       <div className="flex items-center space-x-2">
-                        <span className="font-bold text-slate-900">{sale.receiptNumber}</span>
+                        <span className={`font-bold ${sale.status === 'cancelled' ? 'line-through text-slate-400' : 'text-slate-900'}`}>
+                          {sale.receiptNumber}
+                        </span>
                         <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded uppercase">
                           {sale.paymentMethod}
                         </span>
+                        {sale.status === 'cancelled' && (
+                          <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold">
+                            Annulée
+                          </span>
+                        )}
                       </div>
-                      <p className="text-[11px] text-slate-500 mt-0.5">
+                      <p className="text-[11px] text-slate-500">
                         {new Date(sale.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} • Par {sale.sellerName}
                         {sale.customerName && ` • Client: ${sale.customerName}`}
                       </p>
+                      {sale.status === 'cancelled' && sale.cancellationReason && (
+                        <p className="text-[10px] text-red-600 italic font-medium">
+                          Motif : {sale.cancellationReason}
+                        </p>
+                      )}
                     </div>
 
-                    <div className="flex items-center space-x-3">
-                      <span className="font-extrabold text-slate-900">
+                    <div className="flex items-center space-x-2">
+                      <span className={`font-extrabold ${sale.status === 'cancelled' ? 'line-through text-slate-400' : 'text-slate-900'}`}>
                         {sale.total.toLocaleString()} {business.currency}
                       </span>
                       <button
                         onClick={() => {
                           setViewReceiptFromHistory(sale);
                         }}
-                        className="p-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-semibold flex items-center space-x-1"
+                        className="p-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-semibold flex items-center space-x-1 cursor-pointer"
                         title="Voir / Imprimer le reçu"
                       >
                         <Receipt className="h-3.5 w-3.5" />
                         <span>Reçu</span>
                       </button>
+
+                      {sale.status !== 'cancelled' && (
+                        <button
+                          onClick={() => setSaleToCancel(sale)}
+                          className="p-1.5 rounded-lg bg-red-50 text-red-700 hover:bg-red-100 text-xs font-semibold flex items-center space-x-1 cursor-pointer"
+                          title="Annuler cette vente avec motif"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline">Annuler</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))
@@ -729,6 +855,19 @@ export const PosView: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Sale Cancellation Modal */}
+      {saleToCancel && (
+        <CancelSaleModal
+          sale={saleToCancel}
+          business={business}
+          onClose={() => setSaleToCancel(null)}
+          onConfirmCancel={async (saleId, reason) => {
+            await cancelSale(saleId, reason);
+            setSaleToCancel(null);
+          }}
+        />
       )}
 
       {/* BARCODE SCANNER MODAL */}

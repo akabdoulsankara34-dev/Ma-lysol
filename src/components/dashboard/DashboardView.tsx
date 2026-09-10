@@ -17,9 +17,11 @@ import {
   Layers,
   Award,
   Radio,
-  BarChart3
+  BarChart3,
+  RotateCcw
 } from 'lucide-react';
 import { RemoteLiveMonitor } from './RemoteLiveMonitor';
+import { CancelledSalesHistory } from './CancelledSalesHistory';
 
 export const DashboardView: React.FC = () => {
   const { 
@@ -34,7 +36,7 @@ export const DashboardView: React.FC = () => {
     setActiveTab
   } = useApp();
 
-  const [viewMode, setViewMode] = useState<'live' | 'analytics'>('live');
+  const [viewMode, setViewMode] = useState<'live' | 'analytics' | 'cancellations'>('live');
   const [period, setPeriod] = useState<'today' | 'week' | 'month' | 'all'>('month');
 
   // Filter dates for standard KPI cards
@@ -53,14 +55,22 @@ export const DashboardView: React.FC = () => {
       cutoffDate = new Date(0); // all
     }
 
-    const filteredSales = sales.filter(s => {
+    const activeSales = sales.filter(s => s.status !== 'cancelled');
+    const cancelledSales = sales.filter(s => s.status === 'cancelled');
+
+    const filteredSales = activeSales.filter(s => {
       if (period === 'today') return s.createdAt.startsWith(todayStr);
       return new Date(s.createdAt) >= cutoffDate;
     });
 
+    const filteredCancelledSales = cancelledSales.filter(s => {
+      if (period === 'today') return (s.cancelledAt || s.createdAt).startsWith(todayStr);
+      return new Date(s.cancelledAt || s.createdAt) >= cutoffDate;
+    });
+
     const filteredExpenses = expenses.filter(e => {
-      if (period === 'today') return e.createdAt.startsWith(todayStr);
-      return new Date(e.createdAt) >= cutoffDate;
+      if (period === 'today') return e.date.startsWith(todayStr);
+      return new Date(e.date) >= cutoffDate;
     });
 
     const totalRevenue = filteredSales.reduce((acc, s) => acc + s.total, 0);
@@ -68,6 +78,9 @@ export const DashboardView: React.FC = () => {
     const totalExp = filteredExpenses.reduce((acc, e) => acc + e.amount, 0);
     const grossMargin = totalRevenue - totalCostOfGoods;
     const estimatedNetProfit = grossMargin - totalExp;
+
+    const totalCancelledCount = filteredCancelledSales.length;
+    const totalCancelledAmount = filteredCancelledSales.reduce((acc, s) => acc + s.total, 0);
 
     // Payment method breakdown
     const paymentMap: Record<string, number> = {
@@ -111,11 +124,14 @@ export const DashboardView: React.FC = () => {
     return {
       filteredSales,
       filteredExpenses,
+      filteredCancelledSales,
       totalRevenue,
       totalCostOfGoods,
       totalExp,
       grossMargin,
       estimatedNetProfit,
+      totalCancelledCount,
+      totalCancelledAmount,
       paymentMap,
       topProducts,
       sellersPerformance,
@@ -138,6 +154,7 @@ export const DashboardView: React.FC = () => {
     const months: Record<string, { monthStr: string; label: string; revenue: number; cost: number; expense: number; profit: number }> = {};
 
     sales.forEach(s => {
+      if (s.status === 'cancelled') return;
       const dateStr = s.createdAt.split('T')[0];
       const monthStr = dateStr.substring(0, 7); // YYYY-MM
       
@@ -208,10 +225,10 @@ export const DashboardView: React.FC = () => {
         </div>
 
         {/* View Mode Toggle: Live Monitor vs Analytical Reports */}
-        <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-2xl border border-slate-200 shadow-2xs self-start md:self-auto">
+        <div className="flex items-center overflow-x-auto max-w-full space-x-1 bg-slate-100 p-1 rounded-2xl border border-slate-200 shadow-2xs scrollbar-none w-full sm:w-auto shrink-0">
           <button
             onClick={() => setViewMode('live')}
-            className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
+            className={`flex items-center space-x-2 px-3 sm:px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 transition ${
               viewMode === 'live'
                 ? 'bg-slate-900 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
@@ -223,7 +240,7 @@ export const DashboardView: React.FC = () => {
 
           <button
             onClick={() => setViewMode('analytics')}
-            className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
+            className={`flex items-center space-x-2 px-3 sm:px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 transition ${
               viewMode === 'analytics'
                 ? 'bg-blue-600 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
@@ -232,12 +249,33 @@ export const DashboardView: React.FC = () => {
             <BarChart3 className="h-3.5 w-3.5" />
             <span>Bilan Analytique</span>
           </button>
+
+          <button
+            onClick={() => setViewMode('cancellations')}
+            className={`flex items-center space-x-2 px-3 sm:px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 transition ${
+              viewMode === 'cancellations'
+                ? 'bg-rose-700 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            <RotateCcw className={`h-3.5 w-3.5 ${viewMode === 'cancellations' ? 'text-white' : 'text-rose-500'}`} />
+            <span>Annulations</span>
+            {summary.cancelledSalesCount && summary.cancelledSalesCount > 0 ? (
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
+                viewMode === 'cancellations' ? 'bg-white text-rose-800' : 'bg-rose-100 text-rose-800'
+              }`}>
+                {summary.cancelledSalesCount}
+              </span>
+            ) : null}
+          </button>
         </div>
       </div>
 
-      {/* Render Live Monitor or Analytical Dashboard */}
+      {/* Render Live Monitor, Analytical Dashboard, or Cancelled Sales History */}
       {viewMode === 'live' ? (
         <RemoteLiveMonitor />
+      ) : viewMode === 'cancellations' ? (
+        <CancelledSalesHistory />
       ) : (
         <div className="space-y-6">
           {/* Period Selector Bar for Analytics */}
