@@ -1,8 +1,10 @@
 import { Sale, Business } from '../types';
+import { cashDrawerService } from './cashDrawerService';
 
 export interface PrintReceiptOptions {
   paperWidth?: '80mm' | '58mm';
   autoPrint?: boolean;
+  kickDrawer?: boolean;
 }
 
 /**
@@ -274,6 +276,38 @@ export function generateReceiptHtml(
     <p>${escapeHtml(business.receiptFooter || 'Merci pour votre achat et à très bientôt !')}</p>
     <p style="font-size: 8px; color: #555; margin-top: 4px;">BizPilot Burkina • Gestion de Caisse</p>
   </div>
+
+  <!-- Cash drawer kick signal trigger for standalone tabs / print events -->
+  <script>
+    (function() {
+      var triggered = false;
+      function notifyPrintTrigger() {
+        if (triggered) return;
+        triggered = true;
+        try {
+          // Broadcast to parent BizPilot window via localStorage to kick RJ11 cash drawer
+          var payload = {
+            receiptNumber: ${JSON.stringify(sale.receiptNumber)},
+            saleId: ${JSON.stringify(sale.id)},
+            paymentMethod: ${JSON.stringify(sale.paymentMethod)},
+            time: Date.now()
+          };
+          localStorage.setItem('bizpilot_print_kick_trigger', JSON.stringify(payload));
+          if (window.opener && !window.opener.closed) {
+            window.opener.postMessage({ type: 'BIZPILOT_PRINT_DRAWER_KICK', data: payload }, '*');
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      window.addEventListener('beforeprint', notifyPrintTrigger);
+      var printBtn = document.querySelector('.btn-primary');
+      if (printBtn) {
+        printBtn.addEventListener('click', notifyPrintTrigger);
+      }
+    })();
+  </script>
 </body>
 </html>`;
 }
@@ -297,7 +331,26 @@ export async function printReceipt(
   sale: Sale,
   business: Business,
   options: PrintReceiptOptions = {}
-): Promise<{ success: boolean; fallbackType?: 'iframe' | 'portal' | 'popup_needed'; blobUrl?: string; message?: string }> {
+): Promise<{ success: boolean; fallbackType?: 'iframe' | 'portal' | 'popup_needed'; blobUrl?: string; message?: string; drawerKicked?: boolean }> {
+  // Option kickDrawer (default: true) triggers the cash drawer kick via RJ11 / USB / Bluetooth
+  const shouldKickDrawer = options.kickDrawer !== false;
+  let drawerKicked = false;
+
+  if (shouldKickDrawer) {
+    try {
+      const kickRes = await cashDrawerService.triggerDrawerOnPrintValidation({
+        receiptNumber: sale.receiptNumber,
+        paymentMethod: sale.paymentMethod,
+        saleId: sale.id,
+        operatorName: sale.sellerName,
+        force: true
+      });
+      drawerKicked = kickRes.opened;
+    } catch (err) {
+      console.warn('Cash drawer kick on printReceipt notice:', err);
+    }
+  }
+
   const htmlContent = generateReceiptHtml(sale, business, options);
 
   // --- METHOD 1: Hidden Isolated Iframe (Best for POS thermal printing) ---
@@ -370,7 +423,7 @@ export async function printReceipt(
     });
 
     if (printSuccess) {
-      return { success: true, fallbackType: 'iframe' };
+      return { success: true, fallbackType: 'iframe', drawerKicked };
     }
   } catch (e) {
     console.warn('Iframe print method encountered an error:', e);
@@ -405,7 +458,7 @@ export async function printReceipt(
     setTimeout(removePortal, 1500);
 
     if (printAttemptSucceeded) {
-      return { success: true, fallbackType: 'portal' };
+      return { success: true, fallbackType: 'portal', drawerKicked };
     }
   } catch (portalErr) {
     console.warn('Portal print failed:', portalErr);
@@ -423,6 +476,7 @@ export async function printReceipt(
         success: true,
         fallbackType: 'popup_needed',
         blobUrl,
+        drawerKicked,
         message: 'Reçu ouvert dans un nouvel onglet pour impression.',
       };
     }
@@ -432,6 +486,7 @@ export async function printReceipt(
     success: false,
     fallbackType: 'popup_needed',
     blobUrl,
+    drawerKicked,
     message: "L'environnement d'affichage restreint l'impression directe. Utilisez l'ouverture dans un nouvel onglet ou le téléchargement.",
   };
 }
@@ -456,8 +511,18 @@ export function downloadReceipt(sale: Sale, business: Business): void {
 
 /**
  * Opens the receipt in a clean standalone browser tab where printing is 100% unrestricted.
+ * Also triggers the cash drawer kick via RJ11 / USB / Bluetooth if configured.
  */
-export function openReceiptInNewTab(sale: Sale, business: Business): void {
+export function openReceiptInNewTab(sale: Sale, business: Business, kickDrawer = true): void {
+  if (kickDrawer) {
+    cashDrawerService.triggerDrawerOnPrintValidation({
+      receiptNumber: sale.receiptNumber,
+      paymentMethod: sale.paymentMethod,
+      saleId: sale.id,
+      operatorName: sale.sellerName,
+      force: true
+    }).catch(console.warn);
+  }
   const htmlContent = generateReceiptHtml(sale, business);
   const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);

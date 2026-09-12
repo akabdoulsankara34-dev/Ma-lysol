@@ -440,9 +440,9 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
             <div className="flex items-center space-x-2 text-slate-800">
               <Unlock className="h-3.5 w-3.5 text-amber-600 shrink-0" />
               <div>
-                <span className="font-bold text-[11px] text-amber-950">Caisse à monnaie : </span>
+                <span className="font-bold text-[11px] text-amber-950">Tiroir-caisse (RJ11) : </span>
                 <span className="text-[10px] text-slate-600">
-                  {autoOpenDrawerOnPrint ? 'Actionnée avec l\'impression (USB / Pilote)' : 'Ouverture désactivée'}
+                  {autoOpenDrawerOnPrint ? "Signal RJ11 émis à la sortie du reçu (USB / Pilote)" : "Ouverture désactivée"}
                 </span>
               </div>
             </div>
@@ -467,10 +467,10 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
               disabled={isDrawerOpening}
               onClick={handleOpenDrawer}
               className="flex items-center justify-center space-x-1 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white py-2.5 px-1.5 rounded-xl font-bold text-xs shadow-xs transition disabled:opacity-50 cursor-pointer"
-              title="Actionner le tiroir-caisse (USB / RJ11)"
+              title="Actionner le tiroir-caisse via câble RJ11"
             >
               <Unlock className={`h-4 w-4 ${isDrawerOpening ? 'animate-bounce' : ''}`} />
-              <span className="truncate">Tiroir USB</span>
+              <span className="truncate">Tiroir RJ11</span>
             </button>
 
             <button

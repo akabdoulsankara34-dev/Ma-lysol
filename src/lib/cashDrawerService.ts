@@ -52,7 +52,46 @@ class CashDrawerManager {
       } catch {}
       // Try silent background reconnect for WebUSB and WebSerial
       this.trySilentUsbReconnect();
+
+      // Listen for print drawer kicks dispatched from child windows/popups or print events
+      this.initCrossTabPrintKickListener();
     }
+  }
+
+  private initCrossTabPrintKickListener() {
+    if (typeof window === 'undefined') return;
+
+    // 1. Listen via storage event (cross-tab sync)
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'bizpilot_print_kick_trigger' && e.newValue) {
+        try {
+          const payload = JSON.parse(e.newValue);
+          this.triggerDrawerOnPrintValidation({
+            receiptNumber: payload.receiptNumber,
+            paymentMethod: payload.paymentMethod,
+            saleId: payload.saleId,
+            operatorName: 'Impression Reçu',
+            force: true
+          }).catch(console.warn);
+        } catch {}
+      }
+    });
+
+    // 2. Listen via postMessage
+    window.addEventListener('message', (e) => {
+      if (e.data && e.data.type === 'BIZPILOT_PRINT_DRAWER_KICK' && e.data.data) {
+        try {
+          const payload = e.data.data;
+          this.triggerDrawerOnPrintValidation({
+            receiptNumber: payload.receiptNumber,
+            paymentMethod: payload.paymentMethod,
+            saleId: payload.saleId,
+            operatorName: 'Impression Reçu (Onglet)',
+            force: true
+          }).catch(console.warn);
+        } catch {}
+      }
+    });
   }
 
   loadSettings(): CashDrawerSettings {
