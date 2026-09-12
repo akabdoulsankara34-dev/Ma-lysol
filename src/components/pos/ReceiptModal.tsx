@@ -18,7 +18,8 @@ import {
   Unlock,
   RotateCcw,
   ExternalLink,
-  FileText
+  FileText,
+  Usb
 } from 'lucide-react';
 import { blePrinter, EscPosEncoder } from '../../lib/blePrinter';
 import { cashDrawerService } from '../../lib/cashDrawerService';
@@ -40,6 +41,12 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
   const [printFallback, setPrintFallback] = useState<{ blobUrl?: string; message?: string } | null>(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [bleDeviceName, setBleDeviceName] = useState<string | null>(blePrinter.getConnectedDeviceName());
+  const [autoOpenDrawerOnPrint, setAutoOpenDrawerOnPrint] = useState(
+    cashDrawerService.getSettings().autoOpenOnPrint
+  );
+  const [usbConnected, setUsbConnected] = useState(
+    cashDrawerService.isUsbConnected() || cashDrawerService.isSerialConnected()
+  );
 
   // Fast Pre-warm: Silently prepare Bluetooth connection in background while receipt is viewed
   useEffect(() => {
@@ -58,13 +65,13 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
     setIsDrawerOpening(true);
     try {
       await cashDrawerService.triggerDrawer({
-        reason: `Reçu ${sale.receiptNumber} (Action Rapide)`,
+        reason: `Reçu ${sale.receiptNumber} (Action Rapide Tiroir)`,
         paymentMethod: sale.paymentMethod,
         saleId: sale.id,
         isManual: true,
         force: true
       });
-      setBleStatus({ type: 'success', message: 'Tiroir-caisse à monnaie ouvert avec succès !' });
+      setBleStatus({ type: 'success', message: 'Caisse à monnaie ouverte avec succès !' });
       setTimeout(() => setBleStatus(null), 3500);
     } catch (err: any) {
       setBleStatus({ type: 'error', message: err.message || 'Erreur tiroir-caisse' });
@@ -85,14 +92,37 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
     }
   };
 
-  // Robust universal print handler (Thermal POS-80 / POS-58 / Standard / PDF)
+  // Robust universal print handler (Thermal POS-80 / POS-58 / Standard / PDF / Pilote USB)
   const handlePrint = async () => {
     setIsPrinting(true);
     setPrintFallback(null);
     try {
+      // 1. Actionner l'ouverture de la caisse à monnaie avec la validation de l'impression (USB / Série / Bluetooth)
+      let drawerKicked = false;
+      if (autoOpenDrawerOnPrint) {
+        try {
+          const drawerRes = await cashDrawerService.triggerDrawerOnPrintValidation({
+            receiptNumber: sale.receiptNumber,
+            paymentMethod: sale.paymentMethod,
+            saleId: sale.id,
+            operatorName: sale.sellerName,
+            force: true
+          });
+          drawerKicked = drawerRes.opened;
+        } catch (drawerErr) {
+          console.warn('Erreur ouverture caisse à l\'impression:', drawerErr);
+        }
+      }
+
+      // 2. Lancer l'impression vers le pilote d'impression USB / système
       const result = await printReceipt(sale, business, { paperWidth: '80mm' });
       if (result.success) {
-        setBleStatus({ type: 'success', message: 'Boîte d\'impression ouverte avec succès !' });
+        setBleStatus({ 
+          type: 'success', 
+          message: drawerKicked 
+            ? 'Impression lancée & Caisse à monnaie ouverte (USB / RJ11) !' 
+            : 'Boîte d\'impression ouverte avec succès !' 
+        });
         setTimeout(() => setBleStatus(null), 3500);
       } else {
         setPrintFallback({
@@ -101,7 +131,9 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
         });
         setBleStatus({
           type: 'info',
-          message: 'Cliquez ci-dessous pour ouvrir le ticket dans un nouvel onglet ou le télécharger.'
+          message: drawerKicked 
+            ? 'Caisse ouverte ! Cliquez ci-dessous pour ouvrir le ticket :' 
+            : 'Cliquez ci-dessous pour ouvrir le ticket dans un nouvel onglet ou le télécharger.'
         });
       }
     } catch (err: any) {
@@ -123,6 +155,17 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
   const handleBlePrint = async () => {
     setIsBlePrinting(true);
     setBleStatus({ type: 'info', message: 'Connexion à l\'imprimante POS-80 BLE...' });
+
+    // Also trigger cash drawer kick & sound feedback on BLE print validation
+    if (autoOpenDrawerOnPrint) {
+      cashDrawerService.triggerDrawerOnPrintValidation({
+        receiptNumber: sale.receiptNumber,
+        paymentMethod: sale.paymentMethod,
+        saleId: sale.id,
+        operatorName: sale.sellerName,
+        force: true
+      }).catch(console.warn);
+    }
 
     try {
       // Build ESC/POS Byte Stream
@@ -391,7 +434,32 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
         )}
 
         {/* Action Buttons */}
-        <div className="p-4 bg-white space-y-2">
+        <div className="p-4 bg-white space-y-2.5">
+          {/* Hardware Automation Status & Quick Toggle */}
+          <div className="flex items-center justify-between px-3 py-2 bg-amber-50/70 border border-amber-200/80 rounded-xl text-xs">
+            <div className="flex items-center space-x-2 text-slate-800">
+              <Unlock className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+              <div>
+                <span className="font-bold text-[11px] text-amber-950">Caisse à monnaie : </span>
+                <span className="text-[10px] text-slate-600">
+                  {autoOpenDrawerOnPrint ? 'Actionnée avec l\'impression (USB / Pilote)' : 'Ouverture désactivée'}
+                </span>
+              </div>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer shrink-0">
+              <input
+                type="checkbox"
+                checked={autoOpenDrawerOnPrint}
+                onChange={(e) => {
+                  setAutoOpenDrawerOnPrint(e.target.checked);
+                  cashDrawerService.saveSettings({ autoOpenOnPrint: e.target.checked });
+                }}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4.5 bg-slate-300 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-amber-600"></div>
+            </label>
+          </div>
+
           <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
             <button
               id="btn-open-drawer-receipt"
@@ -399,10 +467,10 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
               disabled={isDrawerOpening}
               onClick={handleOpenDrawer}
               className="flex items-center justify-center space-x-1 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white py-2.5 px-1.5 rounded-xl font-bold text-xs shadow-xs transition disabled:opacity-50 cursor-pointer"
-              title="Déclencher manuellement l'ouverture du tiroir-caisse"
+              title="Actionner le tiroir-caisse (USB / RJ11)"
             >
               <Unlock className={`h-4 w-4 ${isDrawerOpening ? 'animate-bounce' : ''}`} />
-              <span className="truncate">Tiroir</span>
+              <span className="truncate">Tiroir USB</span>
             </button>
 
             <button
@@ -438,7 +506,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
               disabled={isPrinting}
               onClick={handlePrint}
               className="flex items-center justify-center space-x-1 bg-slate-900 hover:bg-black active:bg-slate-950 text-white py-2.5 px-1.5 rounded-xl font-bold text-xs shadow-xs transition cursor-pointer disabled:opacity-50"
-              title="Imprimer via le navigateur ou imprimante de caisse thermique (80mm / 58mm / USB)"
+              title="Valider l'impression (Pilote USB) et ouvrir la caisse à monnaie"
             >
               <Printer className={`h-4 w-4 text-slate-200 ${isPrinting ? 'animate-spin' : ''}`} />
               <span className="truncate">{isPrinting ? 'Envoi...' : 'Imprimer'}</span>

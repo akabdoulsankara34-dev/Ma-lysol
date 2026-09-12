@@ -26,7 +26,10 @@ import {
   Share2,
   Unlock,
   Zap,
-  AlertCircle
+  AlertCircle,
+  Usb,
+  Printer,
+  Laptop
 } from 'lucide-react';
 import { blePrinter } from '../../lib/blePrinter';
 import { cashDrawerService } from '../../lib/cashDrawerService';
@@ -381,14 +384,42 @@ export const SettingsView: React.FC = () => {
             )}
 
             <div className="p-5 space-y-4 text-xs">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 
-                {/* Auto Open */}
+                {/* Auto Open on Print Validation */}
+                <div className="p-3.5 bg-amber-50/60 border border-amber-300/80 rounded-xl space-y-2 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center gap-1.5 text-amber-900 font-bold">
+                      <Printer className="h-3.5 w-3.5 text-amber-700" />
+                      <span>Validation Impression (USB)</span>
+                    </div>
+                    <p className="text-[11px] text-slate-600 mt-1">
+                      Actionner le tiroir dès que le caissier valide ou lance l'impression du reçu.
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer pt-1">
+                    <input
+                      type="checkbox"
+                      checked={drawerSettings.autoOpenOnPrint}
+                      onChange={(e) => {
+                        const up = cashDrawerService.saveSettings({ autoOpenOnPrint: e.target.checked });
+                        setDrawerSettings(up);
+                      }}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-300 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[6px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600"></div>
+                    <span className="ml-2.5 text-[11px] font-bold text-slate-700">
+                      {drawerSettings.autoOpenOnPrint ? 'Activée' : 'Désactivée'}
+                    </span>
+                  </label>
+                </div>
+
+                {/* Auto Open on Sale Completion */}
                 <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 flex flex-col justify-between">
                   <div>
-                    <p className="font-bold text-slate-900">Ouverture automatique</p>
+                    <p className="font-bold text-slate-900">Encaissement Panier</p>
                     <p className="text-[11px] text-slate-500 mt-0.5">
-                      Déclencher l'ouverture dès qu'un reçu de caisse est validé.
+                      Déclencher l'ouverture dès qu'une vente est validée au POS.
                     </p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer pt-1">
@@ -428,7 +459,7 @@ export const SettingsView: React.FC = () => {
                     />
                     <div className="w-9 h-5 bg-slate-300 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[6px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600"></div>
                     <span className="ml-2.5 text-[11px] font-bold text-slate-700">
-                      {drawerSettings.openOnlyOnCashOrSplit ? 'Espèces uniquement' : 'Toutes les ventes'}
+                      {drawerSettings.openOnlyOnCashOrSplit ? 'Espèces' : 'Tous paiements'}
                     </span>
                   </label>
                 </div>
@@ -436,9 +467,9 @@ export const SettingsView: React.FC = () => {
                 {/* Sound */}
                 <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 flex flex-col justify-between">
                   <div>
-                    <p className="font-bold text-slate-900">Bruit de Caisse Enregistreuse</p>
+                    <p className="font-bold text-slate-900">Bruit de Caisse</p>
                     <p className="text-[11px] text-slate-500 mt-0.5">
-                      Jouer le bruitage mécanique et le carillon "Cha-Ching".
+                      Bruitage mécanique et carillon "Cha-Ching".
                     </p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer pt-1">
@@ -453,11 +484,23 @@ export const SettingsView: React.FC = () => {
                     />
                     <div className="w-9 h-5 bg-slate-300 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[6px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600"></div>
                     <span className="ml-2.5 text-[11px] font-bold text-slate-700">
-                      {drawerSettings.soundFeedback ? 'Son actif' : 'Muet'}
+                      {drawerSettings.soundFeedback ? 'Actif' : 'Muet'}
                     </span>
                   </label>
                 </div>
 
+              </div>
+
+              {/* Windows USB Driver Configuration Instructions */}
+              <div className="p-4 bg-blue-50/60 border border-blue-200 rounded-xl space-y-2 text-slate-700">
+                <div className="flex items-center space-x-2 text-blue-900 font-bold">
+                  <Laptop className="h-4 w-4 text-blue-700" />
+                  <span>Configuration du Pilote d'Impression USB (Windows / POS-80 / Epson / Xprinter) :</span>
+                </div>
+                <p className="text-[11px] text-blue-950 leading-relaxed">
+                  Pour que votre pilote d'imprimante USB ouvre également la caisse à monnaie de façon 100% matérielle sur chaque ticket :
+                  Ouvrez <strong>Propriétés de l'imprimante &gt; Paramètres du périphérique</strong> (Device Settings) &gt; Définissez <strong>Tiroir-caisse (Cash Drawer)</strong> sur <strong>Ouvrir avant l'impression</strong>.
+                </p>
               </div>
 
               <div className="p-3 bg-amber-50/50 border border-amber-200 rounded-xl text-[11px] text-amber-900 flex items-start gap-2">
