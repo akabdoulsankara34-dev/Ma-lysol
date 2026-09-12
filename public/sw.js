@@ -1,5 +1,5 @@
 // BizPilot Burkina - Service Worker Pro (Offline Cache & Sync)
-const CACHE_VERSION = 'bizpilot-v4';
+const CACHE_VERSION = 'bizpilot-v6';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -27,7 +27,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames
-          .filter((name) => name.startsWith('bizpilot-') && name !== STATIC_CACHE && name !== RUNTIME_CACHE)
+          .filter((name) => name !== STATIC_CACHE && name !== RUNTIME_CACHE)
           .map((name) => {
             console.log('[SW] Deleting deprecated cache:', name);
             return caches.delete(name);
@@ -76,18 +76,18 @@ self.addEventListener('fetch', (event) => {
           if (networkResponse && networkResponse.status === 200) {
             const responseClone = networkResponse.clone();
             caches.open(STATIC_CACHE).then((cache) => {
-              cache.put('/', responseClone);
+              cache.put(request, responseClone);
             });
           }
           return networkResponse;
         })
         .catch(async () => {
-          const cachedResponse = await caches.match('/') || await caches.match('/index.html');
+          const cachedResponse = await caches.match(request) || await caches.match('/index.html') || await caches.match('/');
           if (cachedResponse) {
             return cachedResponse;
           }
           return new Response(
-            `<!DOCTYPE html><html><head><meta charset="utf-8"><title>BizPilot Burkina - Mode Hors Ligne</title></head><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0f172a;color:#fff;"><h2>BizPilot Burkina</h2><p>Application prête hors-ligne. Veuillez actualiser.</p></body></html>`,
+            `<!DOCTYPE html><html><head><meta charset="utf-8"><title>BizPilot Burkina - Mode Hors Ligne</title></head><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0f172a;color:#fff;"><h2>BizPilot Burkina</h2><p>Application prête hors-ligne. Veuillez actualiser lorsque la connexion est rétablie.</p></body></html>`,
             { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
           );
         })
@@ -114,26 +114,32 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 3. Static App Assets (JS, CSS, SVG, PNG, WebP, Fonts): Stale-While-Revalidate
+  // 3. Static App Assets (JS, CSS, SVG, PNG, WebP, Fonts): Network-First with Cache Fallback
   event.respondWith(
-    caches.match(request).then((cachedResponse) => {
-      const fetchPromise = fetch(request)
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200 && (networkResponse.type === 'basic' || networkResponse.type === 'cors')) {
-            const responseClone = networkResponse.clone();
-            caches.open(RUNTIME_CACHE).then((cache) => {
-              cache.put(request, responseClone);
-            });
+    fetch(request)
+      .then((networkResponse) => {
+        if (
+          networkResponse && 
+          networkResponse.status === 200 && 
+          (networkResponse.type === 'basic' || networkResponse.type === 'cors')
+        ) {
+          // Safeguard: Do not cache/apply HTML responses for CSS requests (MIME type mismatch)
+          const contentType = networkResponse.headers.get('content-type') || '';
+          if (request.destination === 'style' || url.pathname.endsWith('.css')) {
+            if (contentType.includes('text/html')) {
+              return caches.match(request).then(cached => cached || networkResponse);
+            }
           }
-          return networkResponse;
-        })
-        .catch(() => {
-          // Network failed, nothing extra needed if cachedResponse exists
-          return cachedResponse;
-        });
-
-      return cachedResponse || fetchPromise;
-    })
+          const responseClone = networkResponse.clone();
+          caches.open(RUNTIME_CACHE).then((cache) => {
+            cache.put(request, responseClone);
+          });
+        }
+        return networkResponse;
+      })
+      .catch(() => {
+        return caches.match(request);
+      })
   );
 });
 

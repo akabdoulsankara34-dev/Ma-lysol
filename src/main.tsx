@@ -3,10 +3,13 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 
-// In development mode, actively unregister any stale service workers and clear caches
-// to prevent old cached bundles from conflicting with updated React instances
+// In development mode, inside preview iframes, or on dev domains: actively unregister stale service workers
+// and purge deprecated caches to prevent old cached bundles from interfering with CSS/styling
 if ('serviceWorker' in navigator) {
-  if (import.meta.env.DEV) {
+  const isIframe = window.self !== window.top;
+  const isDevOrPreview = import.meta.env.DEV || isIframe || window.location.hostname.includes('ais-dev');
+
+  if (isDevOrPreview) {
     navigator.serviceWorker.getRegistrations().then((registrations) => {
       for (const reg of registrations) {
         reg.unregister();
@@ -24,7 +27,16 @@ if ('serviceWorker' in navigator) {
       navigator.serviceWorker
         .register('/sw.js')
         .then((reg) => {
-          console.log('[PWA] ServiceWorker registered with scope:', reg.scope);
+          reg.onupdatefound = () => {
+            const installingWorker = reg.installing;
+            if (installingWorker) {
+              installingWorker.onstatechange = () => {
+                if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                  installingWorker.postMessage({ type: 'SKIP_WAITING' });
+                }
+              };
+            }
+          };
         })
         .catch((err) => {
           console.log('[PWA] ServiceWorker registration notice:', err);
