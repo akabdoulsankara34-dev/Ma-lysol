@@ -45,13 +45,13 @@ export function generateReceiptHtml(
 
   const itemsRows = sale.items.map((item) => `
     <tr>
-      <td style="padding: 3px 0; text-align: left; vertical-align: top;">
-        <div style="font-weight: 700; color: #000; font-size: 11px;">${escapeHtml(item.productName)}</div>
-        <div style="font-size: 10px; color: #444;">
+      <td style="padding: 5px 0; text-align: left; vertical-align: top;">
+        <div style="font-weight: 800; color: #000000; font-size: ${is58mm ? '12px' : '13px'}; line-height: 1.25;">${escapeHtml(item.productName)}</div>
+        <div style="font-size: ${is58mm ? '11px' : '12px'}; font-weight: 600; color: #000000; margin-top: 1px;">
           ${item.quantity} x ${item.unitPrice.toLocaleString('fr-FR')} ${escapeHtml(business.currency)}
         </div>
       </td>
-      <td style="padding: 3px 0; text-align: right; vertical-align: top; font-weight: 700; white-space: nowrap; font-size: 11px;">
+      <td style="padding: 5px 0; text-align: right; vertical-align: top; font-weight: 800; white-space: nowrap; font-size: ${is58mm ? '12px' : '13px'}; color: #000000;">
         ${item.subtotal.toLocaleString('fr-FR')} ${escapeHtml(business.currency)}
       </td>
     </tr>
@@ -70,87 +70,115 @@ export function generateReceiptHtml(
     }
     *, *::before, *::after {
       box-sizing: border-box;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: geometricPrecision;
     }
     html, body {
       margin: 0;
       padding: 0;
       background-color: #ffffff;
       color: #000000;
-      font-family: 'Courier New', Courier, 'Lucida Console', Monaco, monospace;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Liberation Sans", sans-serif;
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
     body {
       width: ${paperWidth};
       max-width: 100%;
-      padding: 6px 8px 16px 8px;
+      padding: 8px 10px 24px 10px;
       margin: 0 auto;
-      font-size: ${is58mm ? '10px' : '11px'};
+      font-size: ${is58mm ? '12px' : '13px'};
+      font-weight: 600;
       line-height: 1.35;
+      color: #000000;
     }
     .text-center { text-align: center; }
     .text-right { text-align: right; }
     .text-left { text-align: left; }
-    .font-bold { font-weight: 700; }
+    .font-normal { font-weight: 500; }
+    .font-bold { font-weight: 800; }
     .font-black { font-weight: 900; }
     .uppercase { text-transform: uppercase; }
     
     .divider {
-      border-top: 1px dashed #000000;
-      margin: 6px 0;
+      border-top: 1.5px dashed #000000;
+      margin: 7px 0;
+    }
+    .divider-solid {
+      border-top: 1.5px solid #000000;
+      margin: 7px 0;
     }
     .divider-double {
-      border-top: 2px solid #000000;
-      margin: 6px 0;
+      border-top: 2.5px solid #000000;
+      margin: 8px 0;
     }
 
     .store-name {
-      font-size: ${is58mm ? '13px' : '15px'};
+      font-size: ${is58mm ? '16px' : '18px'};
       font-weight: 900;
       letter-spacing: 0.5px;
-      margin-bottom: 2px;
+      margin-bottom: 3px;
+      line-height: 1.2;
+      color: #000000;
+    }
+
+    .store-info {
+      font-size: ${is58mm ? '11px' : '12px'};
+      font-weight: 600;
+      line-height: 1.3;
+      color: #000000;
     }
 
     .meta-row {
       display: flex;
       justify-content: space-between;
-      margin: 1.5px 0;
-      font-size: 10.5px;
+      margin: 3px 0;
+      font-size: ${is58mm ? '11.5px' : '12.5px'};
+      font-weight: 600;
+      color: #000000;
     }
 
     table.items-table {
       width: 100%;
       border-collapse: collapse;
-      margin: 4px 0;
+      margin: 6px 0;
     }
     table.items-table th {
-      border-bottom: 1px dashed #000;
-      padding: 3px 0;
-      font-size: 10.5px;
+      border-bottom: 2px solid #000000;
+      padding: 4px 0;
+      font-size: ${is58mm ? '12px' : '13px'};
+      font-weight: 900;
+      text-transform: uppercase;
+      color: #000000;
     }
 
     .total-banner {
-      font-size: ${is58mm ? '13px' : '14px'};
+      font-size: ${is58mm ? '15px' : '17px'};
       font-weight: 900;
       display: flex;
       justify-content: space-between;
-      padding: 4px 0;
+      padding: 5px 0;
+      color: #000000;
+      letter-spacing: 0.2px;
     }
 
     .cancelled-box {
-      border: 2px solid #000;
-      padding: 4px;
-      margin: 6px 0;
+      border: 2.5px solid #000000;
+      padding: 6px;
+      margin: 8px 0;
       text-align: center;
       font-weight: 900;
-      font-size: 11px;
+      font-size: 13px;
+      color: #000000;
     }
 
     .footer {
-      margin-top: 8px;
-      font-size: 9.5px;
+      margin-top: 12px;
+      font-size: ${is58mm ? '11px' : '12px'};
       text-align: center;
-      line-height: 1.3;
+      line-height: 1.4;
+      font-weight: 600;
+      color: #000000;
     }
 
     .screen-actions {
@@ -163,8 +191,8 @@ export function generateReceiptHtml(
       border-radius: 8px;
     }
     .btn {
-      padding: 6px 14px;
-      font-size: 12px;
+      padding: 8px 16px;
+      font-size: 13px;
       font-weight: bold;
       border-radius: 6px;
       cursor: pointer;
@@ -179,7 +207,7 @@ export function generateReceiptHtml(
         display: none !important;
       }
       body {
-        padding: 4px 6px;
+        padding: 4px 6px 16px 6px;
       }
     }
   </style>
@@ -193,9 +221,9 @@ export function generateReceiptHtml(
   <!-- Store Header -->
   <div class="text-center">
     <div class="store-name uppercase">${escapeHtml(business.name)}</div>
-    ${business.city ? `<div>${escapeHtml(business.city)}</div>` : ''}
-    ${business.phone ? `<div>Tél : ${escapeHtml(business.phone)}</div>` : ''}
-    ${business.ifu ? `<div>N° IFU : ${escapeHtml(business.ifu)}</div>` : ''}
+    ${business.city ? `<div class="store-info">${escapeHtml(business.city)}</div>` : ''}
+    ${business.phone ? `<div class="store-info font-bold">Tél : ${escapeHtml(business.phone)}</div>` : ''}
+    ${business.ifu ? `<div class="store-info">N° IFU : ${escapeHtml(business.ifu)}</div>` : ''}
   </div>
 
   <div class="divider"></div>
@@ -204,7 +232,7 @@ export function generateReceiptHtml(
   ${isCancelled ? `
     <div class="cancelled-box">
       *** TICKET ANNULÉ ***<br />
-      <span style="font-weight: normal; font-size: 9.5px;">Motif : ${escapeHtml(sale.cancellationReason || 'Annulation')}</span>
+      <span style="font-weight: bold; font-size: 11px;">Motif : ${escapeHtml(sale.cancellationReason || 'Annulation')}</span>
     </div>
   ` : ''}
 
@@ -215,7 +243,7 @@ export function generateReceiptHtml(
   </div>
   <div class="meta-row">
     <span>Date :</span>
-    <span>${dateFormatted} ${timeFormatted}</span>
+    <span class="font-bold">${dateFormatted} à ${timeFormatted}</span>
   </div>
   <div class="meta-row">
     <span>Caissier :</span>
@@ -249,32 +277,31 @@ export function generateReceiptHtml(
   ${sale.discount > 0 ? `
     <div class="meta-row">
       <span>Sous-total :</span>
-      <span>${sale.subtotal.toLocaleString('fr-FR')} ${escapeHtml(business.currency)}</span>
+      <span class="font-bold">${sale.subtotal.toLocaleString('fr-FR')} ${escapeHtml(business.currency)}</span>
     </div>
-    <div class="meta-row">
+    <div class="meta-row" style="font-weight: 800;">
       <span>Remise accordée :</span>
-      <span>-${sale.discount.toLocaleString('fr-FR')} ${escapeHtml(business.currency)}</span>
+      <span class="font-bold">-${sale.discount.toLocaleString('fr-FR')} ${escapeHtml(business.currency)}</span>
     </div>
+    <div class="divider"></div>
   ` : ''}
 
-  <div class="divider-double"></div>
-
   <div class="total-banner">
-    <span>TOTAL :</span>
+    <span>TOTAL À PAYER :</span>
     <span>${sale.total.toLocaleString('fr-FR')} ${escapeHtml(business.currency)}</span>
   </div>
 
   <div class="divider-double"></div>
 
-  <div class="meta-row">
-    <span>Règlement :</span>
-    <span class="font-bold">${getPaymentLabel(sale.paymentMethod)}</span>
+  <div class="meta-row" style="font-size: ${is58mm ? '12px' : '13px'};">
+    <span>Mode de Règlement :</span>
+    <span class="font-bold uppercase">${getPaymentLabel(sale.paymentMethod)}</span>
   </div>
 
   <!-- Receipt Footer -->
   <div class="footer">
-    <p>${escapeHtml(business.receiptFooter || 'Merci pour votre achat et à très bientôt !')}</p>
-    <p style="font-size: 8px; color: #555; margin-top: 4px;">BizPilot Burkina • Gestion de Caisse</p>
+    <p style="margin: 3px 0; font-weight: 700;">${escapeHtml(business.receiptFooter || 'Merci pour votre achat et à très bientôt !')}</p>
+    <p style="font-size: 9px; font-weight: 800; color: #000000; margin-top: 6px; letter-spacing: 0.5px;">BIZPILOT BURKINA • GESTION DE CAISSE</p>
   </div>
 
   <!-- Cash drawer kick signal trigger for standalone tabs / print events -->

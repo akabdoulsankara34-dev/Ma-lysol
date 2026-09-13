@@ -37,6 +37,12 @@ export class EscPosEncoder {
     return this;
   }
 
+  // Double strike for extra dark bold print on thermal paper
+  doubleStrike(enable: boolean): this {
+    this.buffer.push(ESC, 0x47, enable ? 1 : 0);
+    return this;
+  }
+
   underline(enable: boolean): this {
     this.buffer.push(ESC, 0x2D, enable ? 1 : 0);
     return this;

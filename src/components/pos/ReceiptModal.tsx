@@ -174,32 +174,33 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
       // Store Header
       encoder.initialize()
         .openDrawer(0) // Automatically pop cash drawer open via RJ11 when printing ticket
+        .doubleStrike(true)
         .align('center')
         .bold(true)
         .textSize(2, 2)
         .textLine(business.name.toUpperCase())
         .textSize(1, 1)
-        .bold(false)
-        .textLine(business.city)
-        .textLine(`Tel : ${business.phone}`);
+        .bold(true)
+        .textLine(business.city || '')
+        .textLine(`Tel : ${business.phone || ''}`);
       
       if (business.ifu) {
         encoder.textLine(`IFU : ${business.ifu}`);
       }
 
       if (sale.status === 'cancelled') {
-        encoder.divider('!', 42)
+        encoder.divider('=', 42)
           .align('center')
           .bold(true)
           .textLine('*** TICKET ANNULE ***')
-          .bold(false)
           .textLine(`Motif : ${(sale.cancellationReason || '').slice(0, 34)}`)
           .textLine(`Par : ${(sale.cancelledByName || 'Caissier').slice(0, 34)}`)
-          .divider('!', 42);
+          .divider('=', 42);
       }
 
       encoder.divider('-', 42)
         .align('left')
+        .bold(true)
         .textLine(`Ticket N : ${sale.receiptNumber}`)
         .textLine(`Date : ${new Date(sale.createdAt).toLocaleDateString('fr-FR')} ${new Date(sale.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`)
         .textLine(`Caissier : ${sale.sellerName}`);
@@ -208,27 +209,31 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
         encoder.textLine(`Client : ${sale.customerName}`);
       }
 
-      encoder.divider('-', 42)
-        .row('ARTICLE', 'TOTAL (FCFA)', 42);
+      encoder.divider('=', 42)
+        .bold(true)
+        .row('ARTICLE', 'TOTAL (FCFA)', 42)
+        .divider('-', 42);
 
       sale.items.forEach(item => {
         const itemLine = `${item.quantity}x ${item.productName}`;
         const itemTotal = `${item.subtotal.toLocaleString()} ${business.currency}`;
-        encoder.row(itemLine.slice(0, 24), itemTotal, 42);
+        encoder.bold(true).row(itemLine.slice(0, 24), itemTotal, 42);
       });
 
       encoder.divider('-', 42);
 
       if (sale.discount > 0) {
-        encoder.row('Sous-total :', `${sale.subtotal.toLocaleString()} ${business.currency}`, 42)
-          .row('Remise :', `-${sale.discount.toLocaleString()} ${business.currency}`, 42);
+        encoder.bold(true)
+          .row('Sous-total :', `${sale.subtotal.toLocaleString()} ${business.currency}`, 42)
+          .row('Remise :', `-${sale.discount.toLocaleString()} ${business.currency}`, 42)
+          .divider('-', 42);
       }
 
       encoder.bold(true)
         .textSize(2, 2)
         .row('TOTAL :', `${sale.total.toLocaleString()} ${business.currency}`, 21)
         .textSize(1, 1)
-        .bold(false)
+        .bold(true)
         .row('Reglement :', getPaymentLabel(sale.paymentMethod), 42)
         .divider('=', 42)
         .align('center')
@@ -313,31 +318,31 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
         </div>
 
         {/* Printable Thermal Receipt Box */}
-        <div className="p-5 bg-slate-50 border-b border-slate-200 max-h-[55vh] overflow-y-auto print:max-h-none">
+        <div className="p-5 bg-slate-100 border-b border-slate-200 max-h-[55vh] overflow-y-auto print:max-h-none">
           <div 
             id="thermal-receipt" 
-            className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs font-mono text-xs text-slate-800 space-y-3"
+            className="bg-white p-6 rounded-xl border-2 border-slate-300 shadow-sm font-sans text-xs text-black space-y-3 max-w-sm mx-auto"
           >
             {/* Store Header */}
-            <div className="text-center space-y-1 pb-3 border-b border-dashed border-slate-300">
-              <p className="font-extrabold text-sm tracking-wide text-slate-900">{business.name.toUpperCase()}</p>
-              <p className="text-[11px] text-slate-600">{business.city}</p>
-              <p className="text-[11px] text-slate-600">Tél : {business.phone}</p>
-              {business.ifu && <p className="text-[10px] text-slate-500">N° IFU : {business.ifu}</p>}
+            <div className="text-center space-y-1 pb-3 border-b-2 border-dashed border-slate-900">
+              <p className="font-black text-base tracking-wide text-black">{business.name.toUpperCase()}</p>
+              {business.city && <p className="text-xs font-bold text-black">{business.city}</p>}
+              {business.phone && <p className="text-xs font-bold text-black">Tél : {business.phone}</p>}
+              {business.ifu && <p className="text-[11px] font-bold text-black">N° IFU : {business.ifu}</p>}
             </div>
 
             {/* Cancelled Banner if applicable */}
             {sale.status === 'cancelled' && (
-              <div className="bg-red-50 border border-red-300 rounded-lg p-2.5 text-center text-red-800 space-y-1">
+              <div className="bg-red-50 border-2 border-red-600 rounded-lg p-2.5 text-center text-red-900 space-y-1">
                 <div className="flex items-center justify-center space-x-1.5 font-black text-xs uppercase tracking-wide text-red-700">
-                  <RotateCcw className="h-3.5 w-3.5" />
+                  <RotateCcw className="h-4 w-4 text-red-600" />
                   <span>*** TICKET ANNULÉ ***</span>
                 </div>
-                <p className="text-[11px] font-medium text-slate-800">
-                  Motif : <span className="italic font-bold">{sale.cancellationReason || 'Non spécifié'}</span>
+                <p className="text-xs font-bold text-black">
+                  Motif : <span className="italic">{sale.cancellationReason || 'Non spécifié'}</span>
                 </p>
                 {sale.cancelledAt && (
-                  <p className="text-[10px] text-slate-500">
+                  <p className="text-[11px] font-bold text-slate-800">
                     Annulé le {new Date(sale.cancelledAt).toLocaleDateString('fr-FR')} par {sale.cancelledByName || 'Caissier'}
                   </p>
                 )}
@@ -345,76 +350,77 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
             )}
 
             {/* Meta Info */}
-            <div className="space-y-1 text-[11px] text-slate-600 pb-2 border-b border-dashed border-slate-300">
+            <div className="space-y-1.5 text-xs text-black pb-2.5 border-b-2 border-dashed border-slate-900 font-semibold">
               <div className="flex justify-between">
                 <span>N° Ticket :</span>
-                <span className="font-bold text-slate-900">{sale.receiptNumber}</span>
+                <span className="font-black text-black">{sale.receiptNumber}</span>
               </div>
               <div className="flex justify-between">
                 <span>Date :</span>
-                <span>{new Date(sale.createdAt).toLocaleDateString('fr-FR')} {new Date(sale.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
+                <span className="font-bold text-black">{new Date(sale.createdAt).toLocaleDateString('fr-FR')} à {new Date(sale.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
               </div>
               <div className="flex justify-between">
                 <span>Caissier :</span>
-                <span>{sale.sellerName}</span>
+                <span className="font-bold text-black">{sale.sellerName}</span>
               </div>
               {sale.customerName && (
                 <div className="flex justify-between">
                   <span>Client :</span>
-                  <span className="font-semibold text-slate-900">{sale.customerName}</span>
+                  <span className="font-black text-black">{sale.customerName}</span>
                 </div>
               )}
             </div>
 
             {/* Items Table */}
-            <div className="space-y-1.5 pb-3 border-b border-dashed border-slate-300">
-              <div className="flex justify-between font-bold text-[11px] text-slate-900 pb-1">
+            <div className="space-y-2 pb-3 border-b-2 border-dashed border-slate-900">
+              <div className="flex justify-between font-black text-xs text-black pb-1 uppercase tracking-wider border-b border-slate-900">
                 <span>Article</span>
                 <span>Total</span>
               </div>
               {sale.items.map((item, idx) => (
-                <div key={idx} className="flex justify-between text-[11px]">
+                <div key={idx} className="flex justify-between text-xs py-0.5">
                   <div className="pr-2">
-                    <p className="font-medium text-slate-900">{item.productName}</p>
-                    <p className="text-[10px] text-slate-500">
-                      {item.quantity} x {item.unitPrice.toLocaleString()} {business.currency}
+                    <p className="font-extrabold text-black">{item.productName}</p>
+                    <p className="text-[11px] font-bold text-slate-900">
+                      {item.quantity} x {item.unitPrice.toLocaleString('fr-FR')} {business.currency}
                     </p>
                   </div>
-                  <span className="font-semibold text-slate-900 whitespace-nowrap">
-                    {item.subtotal.toLocaleString()} {business.currency}
+                  <span className="font-black text-black whitespace-nowrap text-right">
+                    {item.subtotal.toLocaleString('fr-FR')} {business.currency}
                   </span>
                 </div>
               ))}
             </div>
 
             {/* Totals */}
-            <div className="space-y-1 text-[11px] pb-3 border-b border-dashed border-slate-300">
+            <div className="space-y-1.5 text-xs pb-3 border-b-2 border-dashed border-slate-900">
               {sale.discount > 0 && (
                 <>
-                  <div className="flex justify-between text-slate-600">
+                  <div className="flex justify-between text-black font-semibold">
                     <span>Sous-total :</span>
-                    <span>{sale.subtotal.toLocaleString()} {business.currency}</span>
+                    <span className="font-bold text-black">{sale.subtotal.toLocaleString('fr-FR')} {business.currency}</span>
                   </div>
-                  <div className="flex justify-between text-blue-700 font-semibold">
+                  <div className="flex justify-between text-black font-bold">
                     <span>Remise accordée :</span>
-                    <span>-{sale.discount.toLocaleString()} {business.currency}</span>
+                    <span className="font-extrabold text-black">-{sale.discount.toLocaleString('fr-FR')} {business.currency}</span>
                   </div>
+                  <div className="border-b border-dashed border-slate-400 my-1"></div>
                 </>
               )}
-              <div className="flex justify-between text-sm font-extrabold text-slate-950 pt-1">
-                <span>TOTAL :</span>
-                <span>{sale.total.toLocaleString()} {business.currency}</span>
+              <div className="flex justify-between text-base font-black text-black pt-1">
+                <span>TOTAL À PAYER :</span>
+                <span className="tracking-tight">{sale.total.toLocaleString('fr-FR')} {business.currency}</span>
               </div>
-              <div className="flex justify-between text-[11px] text-slate-600 pt-1">
-                <span>Règlement :</span>
-                <span className="font-semibold text-slate-900">{getPaymentLabel(sale.paymentMethod)}</span>
+              <div className="flex justify-between text-xs text-black pt-1">
+                <span className="font-semibold">Mode de Règlement :</span>
+                <span className="font-black text-black uppercase">{getPaymentLabel(sale.paymentMethod)}</span>
               </div>
             </div>
 
             {/* Footer */}
-            <div className="text-center pt-1 text-[10px] text-slate-500 leading-tight">
+            <div className="text-center pt-1 text-xs text-black leading-snug font-bold">
               <p>{business.receiptFooter || 'Merci pour votre achat et à très bientôt !'}</p>
-              <p className="mt-1 font-bold text-slate-600">BizPilot Burkina • Gestion de Caisse</p>
+              <p className="mt-2 text-[10px] font-black text-black uppercase tracking-wider">BizPilot Burkina • Gestion de Caisse</p>
             </div>
           </div>
         </div>
