@@ -26,21 +26,13 @@ const MainLayout: React.FC = () => {
   const { 
     activeTab, 
     currentUser, 
+    setActiveTab,
     isPlatformAdminUnlocked, 
     isBusinessAuthenticated,
     userToSwitchWithPin,
     setUserToSwitchWithPin,
     switchUser
   } = useApp();
-
-  // Check if this window was opened specifically as the Secondary Customer-Facing Display
-  const isDedicatedCustomerWindow = typeof window !== 'undefined' && (
-    window.location.href.includes('display=customer')
-  );
-
-  if (isDedicatedCustomerWindow) {
-    return <CustomerDisplayView isStandaloneWindow={true} />;
-  }
 
   // If the user hasn't authenticated their business and isn't on the platform admin screen, show company login portal
   if (!isBusinessAuthenticated && activeTab !== 'admin') {
@@ -79,7 +71,12 @@ const MainLayout: React.FC = () => {
           {activeTab === 'expenses' && <ExpensesView />}
           {activeTab === 'dashboard' && (isManager ? <DashboardView /> : <PosView />)}
           {activeTab === 'settings' && (isOwner ? <SettingsView /> : <PosView />)}
-          {activeTab === 'customer_display' && <CustomerDisplayView />}
+          {activeTab === 'customer_display' && (
+            <CustomerDisplayView 
+              isStandaloneWindow={false} 
+              onBackToPos={() => setActiveTab('pos')} 
+            />
+          )}
           {activeTab === 'admin' && (isPlatformAdminUnlocked ? <PlatformAdminView /> : <PosView />)}
         </main>
       </div>
@@ -106,6 +103,17 @@ const MainLayout: React.FC = () => {
 };
 
 export default function App() {
+  // Check if this window was opened specifically as the Secondary Customer-Facing Display
+  const isDedicatedCustomerWindow = typeof window !== 'undefined' && (
+    window.location.search.includes('display=customer') ||
+    window.location.href.includes('display=customer') ||
+    window.location.hash.includes('display=customer')
+  );
+
+  if (isDedicatedCustomerWindow) {
+    return <CustomerDisplayView isStandaloneWindow={true} />;
+  }
+
   return (
     <AppProvider>
       <MainLayout />

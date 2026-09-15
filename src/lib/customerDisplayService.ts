@@ -45,6 +45,14 @@ export interface CustomerDisplayState {
     totalAmount: number;
     receivedAmount?: number;
     changeToReturn?: number;
+    creditDue?: number;
+    paymentBreakdown?: {
+      cash?: number;
+      orangeMoney?: number;
+      moovMoney?: number;
+      waveCoris?: number;
+      credit?: number;
+    };
     paymentMethod: string;
     itemCount: number;
     customerName?: string;
@@ -55,14 +63,20 @@ export interface CustomerDisplayState {
 }
 
 const STORAGE_KEY = 'bizpilot_customer_display_state';
+const STORAGE_PING_KEY = 'bizpilot_customer_display_ping';
 const CHANNEL_NAME = 'bizpilot_customer_display_channel';
 
 // Default initial state
 export const getInitialDisplayState = (): CustomerDisplayState => {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      return JSON.parse(raw);
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          return parsed;
+        }
+      }
     }
   } catch (e) {
     // Ignore parse error
@@ -79,7 +93,7 @@ export const getInitialDisplayState = (): CustomerDisplayState => {
     subtotal: 0,
     discount: 0,
     totalAmount: 0,
-    updatedAt: Date.now()
+    updatedAt: 0
   };
 };
 
@@ -93,27 +107,174 @@ try {
   console.warn('[CustomerDisplay] BroadcastChannel not supported, using storage events');
 }
 
+// Direct reference to customer display window opened from POS
+let activeCustomerWindow: Window | null = null;
+let latestDisplayState: CustomerDisplayState = getInitialDisplayState();
+
+/**
+ * Register child customer display window for direct zero-latency postMessage sync
+ */
+export const registerCustomerWindow = (win: Window | null) => {
+  activeCustomerWindow = win;
+  if (win && !win.closed) {
+    try {
+      const current = latestDisplayState;
+      win.postMessage({
+        type: 'CUSTOMER_DISPLAY_UPDATE',
+        payload: current
+      }, '*');
+    } catch (e) {
+      console.warn('[CustomerDisplay] Initial direct window post failed:', e);
+    }
+  }
+};
+
+/**
+ * Get active customer window if still open
+ */
+export const getCustomerWindow = (): Window | null => {
+  if (activeCustomerWindow && !activeCustomerWindow.closed) {
+    return activeCustomerWindow;
+  }
+  return null;
+};
+
+/**
+ * Send answer with current state across all channels
+ */
+const replyWithCurrentState = (targetWindow?: Window | null) => {
+  const current = latestDisplayState;
+  
+  // 1. If targetWindow provided, direct postMessage
+  if (targetWindow && !targetWindow.closed) {
+    try {
+      targetWindow.postMessage({
+        type: 'CUSTOMER_DISPLAY_UPDATE',
+        payload: current
+      }, '*');
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  // 2. Active child window
+  if (activeCustomerWindow && !activeCustomerWindow.closed && activeCustomerWindow !== targetWindow) {
+    try {
+      activeCustomerWindow.postMessage({
+        type: 'CUSTOMER_DISPLAY_UPDATE',
+        payload: current
+      }, '*');
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  // 3. Broadcast channel
+  if (channel) {
+    try {
+      channel.postMessage({
+        type: 'CUSTOMER_DISPLAY_UPDATE',
+        payload: current
+      });
+      channel.postMessage({
+        type: 'CUSTOMER_DISPLAY_PONG',
+        timestamp: Date.now()
+      });
+    } catch (e) {
+      // ignore
+    }
+  }
+};
+
+// Global listener in POS / App window to answer sync requests & heartbeats
+if (typeof window !== 'undefined') {
+  window.addEventListener('message', (event) => {
+    if (event.data?.type === 'CUSTOMER_DISPLAY_REQUEST_SYNC') {
+      const sourceWin = event.source as Window | null;
+      if (sourceWin && !activeCustomerWindow) {
+        activeCustomerWindow = sourceWin;
+      }
+      replyWithCurrentState(sourceWin);
+    } else if (event.data?.type === 'CUSTOMER_DISPLAY_PING') {
+      const sourceWin = event.source as Window | null;
+      try {
+        sourceWin?.postMessage({
+          type: 'CUSTOMER_DISPLAY_PONG',
+          timestamp: Date.now(),
+          payload: latestDisplayState
+        }, '*');
+      } catch (e) {
+        // ignore
+      }
+    }
+  });
+
+  if (channel) {
+    channel.addEventListener('message', (event) => {
+      if (event.data?.type === 'CUSTOMER_DISPLAY_REQUEST_SYNC') {
+        replyWithCurrentState();
+      } else if (event.data?.type === 'CUSTOMER_DISPLAY_PING') {
+        try {
+          channel?.postMessage({
+            type: 'CUSTOMER_DISPLAY_PONG',
+            timestamp: Date.now(),
+            payload: latestDisplayState
+          });
+        } catch (e) {
+          // ignore
+        }
+      }
+    });
+  }
+}
+
 /**
  * Send real-time updates from Cashier Screen to 2nd Customer Display Screen
  */
 export const broadcastCustomerDisplay = (stateUpdate: Partial<CustomerDisplayState>) => {
   if (typeof window === 'undefined') return;
 
-  const current = getInitialDisplayState();
+  const current = latestDisplayState;
   const newState: CustomerDisplayState = {
     ...current,
     ...stateUpdate,
     updatedAt: Date.now()
   };
+  latestDisplayState = newState;
 
-  // 1. Save to localStorage (cross-window storage sync)
+  // 1. Direct window.postMessage to opened secondary window (0ms latency, works across partitioned iframes)
+  if (activeCustomerWindow && !activeCustomerWindow.closed) {
+    try {
+      activeCustomerWindow.postMessage({
+        type: 'CUSTOMER_DISPLAY_UPDATE',
+        payload: newState
+      }, '*');
+    } catch (err) {
+      console.warn('[CustomerDisplay] Direct child postMessage failed:', err);
+    }
+  }
+
+  // 2. Direct window.opener.postMessage if this window is itself a child
+  if (window.opener && !window.opener.closed) {
+    try {
+      window.opener.postMessage({
+        type: 'CUSTOMER_DISPLAY_UPDATE',
+        payload: newState
+      }, '*');
+    } catch (err) {
+      // ignore
+    }
+  }
+
+  // 3. Save to localStorage (cross-window storage sync)
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
+    localStorage.setItem(STORAGE_PING_KEY, `${Date.now()}_${Math.random()}`);
   } catch (e) {
     // Storage quota or private mode
   }
 
-  // 2. Broadcast via BroadcastChannel (0ms latency for cross-window)
+  // 4. Broadcast via BroadcastChannel (cross-window)
   if (channel) {
     try {
       channel.postMessage({
@@ -125,7 +286,7 @@ export const broadcastCustomerDisplay = (stateUpdate: Partial<CustomerDisplaySta
     }
   }
 
-  // 3. Local window event (for instant same-window component updates & test views)
+  // 5. Local window event (for instant same-window component updates & test views)
   try {
     window.dispatchEvent(new CustomEvent('bizpilot_customer_display_event', {
       detail: newState
@@ -136,30 +297,99 @@ export const broadcastCustomerDisplay = (stateUpdate: Partial<CustomerDisplaySta
 };
 
 /**
- * Robust listener subscribing to all channels: BroadcastChannel, StorageEvent, CustomEvent, and Polling fallback
+ * Explicit manual sync request from Customer Display to POS
  */
-export const subscribeCustomerDisplay = (onUpdate: (state: CustomerDisplayState) => void): (() => void) => {
+export const requestCustomerDisplaySync = () => {
+  if (typeof window === 'undefined') return;
+
+  // 1. Post to opener
+  if (window.opener && !window.opener.closed) {
+    try {
+      window.opener.postMessage({ type: 'CUSTOMER_DISPLAY_REQUEST_SYNC' }, '*');
+      window.opener.postMessage({ type: 'CUSTOMER_DISPLAY_PING' }, '*');
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  // 2. Post to channel
+  if (channel) {
+    try {
+      channel.postMessage({ type: 'CUSTOMER_DISPLAY_REQUEST_SYNC' });
+      channel.postMessage({ type: 'CUSTOMER_DISPLAY_PING' });
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  // 3. Refresh from localStorage directly
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed) {
+        latestDisplayState = parsed;
+        window.dispatchEvent(new CustomEvent('bizpilot_customer_display_event', {
+          detail: parsed
+        }));
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+};
+
+/**
+ * Robust listener subscribing to all channels: Direct postMessage, BroadcastChannel, StorageEvent, CustomEvent, Heartbeat and Polling fallback
+ */
+export const subscribeCustomerDisplay = (
+  onUpdate: (state: CustomerDisplayState) => void,
+  onConnectionChange?: (connected: boolean) => void
+): (() => void) => {
   if (typeof window === 'undefined') {
     return () => {};
   }
 
   let localChannel: BroadcastChannel | null = null;
-  let lastUpdatedAt = 0;
+  let lastReceivedTime = Date.now();
 
   const handleUpdate = (state: CustomerDisplayState) => {
-    if (state && state.updatedAt !== lastUpdatedAt) {
-      lastUpdatedAt = state.updatedAt;
-      onUpdate(state);
-    }
+    if (!state || typeof state !== 'object') return;
+    lastReceivedTime = Date.now();
+    latestDisplayState = state;
+    onConnectionChange?.(true);
+    onUpdate(state);
   };
 
-  // 1. BroadcastChannel (0ms cross-window)
+  // 1. Direct postMessage listener (handles window.opener or parent window sync)
+  const handleDirectMessage = (event: MessageEvent) => {
+    if (!event.data) return;
+    if (event.data.type === 'CUSTOMER_DISPLAY_UPDATE' && event.data.payload) {
+      handleUpdate(event.data.payload);
+    } else if (event.data.type === 'CUSTOMER_DISPLAY_PONG') {
+      lastReceivedTime = Date.now();
+      onConnectionChange?.(true);
+      if (event.data.payload) {
+        handleUpdate(event.data.payload);
+      }
+    }
+  };
+  window.addEventListener('message', handleDirectMessage);
+
+  // 2. BroadcastChannel (0ms cross-window)
   try {
     if ('BroadcastChannel' in window) {
       localChannel = new BroadcastChannel(CHANNEL_NAME);
       localChannel.onmessage = (event) => {
-        if (event.data?.type === 'CUSTOMER_DISPLAY_UPDATE' && event.data.payload) {
+        if (!event.data) return;
+        if (event.data.type === 'CUSTOMER_DISPLAY_UPDATE' && event.data.payload) {
           handleUpdate(event.data.payload);
+        } else if (event.data.type === 'CUSTOMER_DISPLAY_PONG') {
+          lastReceivedTime = Date.now();
+          onConnectionChange?.(true);
+          if (event.data.payload) {
+            handleUpdate(event.data.payload);
+          }
         }
       };
     }
@@ -167,7 +397,7 @@ export const subscribeCustomerDisplay = (onUpdate: (state: CustomerDisplayState)
     // BroadcastChannel unsupported
   }
 
-  // 2. Storage event (cross-tab/window fallback)
+  // 3. Storage event (cross-tab/window fallback)
   const handleStorage = (e: StorageEvent) => {
     if (e.key === STORAGE_KEY && e.newValue) {
       try {
@@ -176,11 +406,21 @@ export const subscribeCustomerDisplay = (onUpdate: (state: CustomerDisplayState)
       } catch (err) {
         // Ignore
       }
+    } else if (e.key === STORAGE_PING_KEY) {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          handleUpdate(parsed);
+        }
+      } catch (err) {
+        // Ignore
+      }
     }
   };
   window.addEventListener('storage', handleStorage);
 
-  // 3. Window CustomEvent (instant for same-window / tabs)
+  // 4. Window CustomEvent (instant for same-window / tabs)
   const handleCustomEvent = (e: Event) => {
     const customEvt = e as CustomEvent<CustomerDisplayState>;
     if (customEvt.detail) {
@@ -189,33 +429,67 @@ export const subscribeCustomerDisplay = (onUpdate: (state: CustomerDisplayState)
   };
   window.addEventListener('bizpilot_customer_display_event', handleCustomEvent);
 
-  // 4. Polling fallback (every 800ms) for sandboxed iframes or background tabs
-  const pollInterval = setInterval(() => {
+  // 5. Initial state load
+  const initial = getInitialDisplayState();
+  onUpdate(initial);
+
+  // 6. Request sync handshake immediately and across intervals
+  const pingPos = () => {
+    // Ping via opener
+    if (window.opener && !window.opener.closed) {
+      try {
+        window.opener.postMessage({ type: 'CUSTOMER_DISPLAY_PING' }, '*');
+      } catch (e) {
+        // ignore
+      }
+    }
+    // Ping via broadcast channel
+    if (localChannel) {
+      try {
+        localChannel.postMessage({ type: 'CUSTOMER_DISPLAY_PING' });
+      } catch (e) {
+        // ignore
+      }
+    }
+  };
+
+  // Heartbeat & connection quality monitor (runs every 2 seconds)
+  const heartbeatTimer = setInterval(() => {
+    pingPos();
+
+    // Check localStorage in case background events were throttled
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed.updatedAt && parsed.updatedAt > lastUpdatedAt) {
+        if (parsed && parsed.updatedAt && parsed.updatedAt > (latestDisplayState?.updatedAt || 0)) {
           handleUpdate(parsed);
         }
       }
     } catch {
       // Ignore
     }
-  }, 800);
 
-  // Initial push with current state
-  const initial = getInitialDisplayState();
-  lastUpdatedAt = initial.updatedAt || 0;
-  onUpdate(initial);
+    // If no signal for > 6 seconds, indicate connection lost / waiting
+    const isAlive = (Date.now() - lastReceivedTime) < 7000;
+    onConnectionChange?.(isAlive);
+  }, 2000);
+
+  // Request sync on start (rapid sequence)
+  requestCustomerDisplaySync();
+  const t1 = setTimeout(requestCustomerDisplaySync, 300);
+  const t2 = setTimeout(requestCustomerDisplaySync, 1000);
 
   return () => {
+    window.removeEventListener('message', handleDirectMessage);
     if (localChannel) {
       localChannel.close();
     }
     window.removeEventListener('storage', handleStorage);
     window.removeEventListener('bizpilot_customer_display_event', handleCustomEvent);
-    clearInterval(pollInterval);
+    clearInterval(heartbeatTimer);
+    clearTimeout(t1);
+    clearTimeout(t2);
   };
 };
 
@@ -223,10 +497,6 @@ export const subscribeCustomerDisplay = (onUpdate: (state: CustomerDisplayState)
  * Interactive Demo / Simulation for testing the customer display live
  */
 export const runCustomerDisplaySimulation = (onStep?: (stepName: string) => void) => {
-  const baseState = getInitialDisplayState();
-  const businessName = baseState.businessName || 'BizPilot Burkina';
-  const currency = baseState.currency || 'FCFA';
-
   // Step 1: Add first article (0ms)
   onStep?.('Ajout Article 1');
   const item1: CustomerDisplayItem = {
@@ -354,6 +624,12 @@ export const playPosTone = (type: 'beep' | 'success' | 'remove') => {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioContextClass) return;
     const ctx = new AudioContextClass();
+    
+    // Resume context if suspended
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
 

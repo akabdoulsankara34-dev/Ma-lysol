@@ -9,10 +9,14 @@ interface BarcodeScannerProps {
 
 export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({ onScan, onClose }) => {
   const scannerRef = useRef<Html5QrcodeScanner | null>(null);
+  const onScanRef = useRef(onScan);
+  onScanRef.current = onScan;
+  const isHandledRef = useRef(false);
   const [error, setError] = useState<string>('');
 
   useEffect(() => {
-    scannerRef.current = new Html5QrcodeScanner(
+    isHandledRef.current = false;
+    const scanner = new Html5QrcodeScanner(
       'qr-reader',
       { 
         fps: 10, 
@@ -29,25 +33,28 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({ onScan, onClose 
       },
       /* verbose= */ false
     );
+    scannerRef.current = scanner;
 
-    scannerRef.current.render(
+    scanner.render(
       (decodedText) => {
-        if (scannerRef.current) {
-          scannerRef.current.clear();
-        }
-        onScan(decodedText);
+        if (isHandledRef.current) return;
+        isHandledRef.current = true;
+        try {
+          scanner.clear().catch(() => {});
+        } catch {}
+        onScanRef.current(decodedText);
       },
       (errorMessage) => {
-        // Ignore normal scanning errors
+        // Ignore normal scanning loop errors
       }
     );
 
     return () => {
-      if (scannerRef.current) {
-        scannerRef.current.clear().catch(console.error);
-      }
+      try {
+        scanner.clear().catch(() => {});
+      } catch {}
     };
-  }, [onScan]);
+  }, []); // Only mount once per opening
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">

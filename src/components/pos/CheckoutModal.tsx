@@ -45,6 +45,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   // Split payment state
   const [splitCash, setSplitCash] = useState<number>(Math.floor(totalAmount / 2));
   const [splitMobile, setSplitMobile] = useState<number>(totalAmount - Math.floor(totalAmount / 2));
+  const [splitCredit, setSplitCredit] = useState<number>(0);
   const [splitMobileType, setSplitMobileType] = useState<'orangeMoney' | 'moovMoney' | 'waveCoris'>('orangeMoney');
 
   // New quick customer state
@@ -57,7 +58,16 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   // Change computation for cash
   const changeToReturn = Math.max(0, receivedAmount - totalAmount);
 
-  // Real-time broadcast to secondary customer display
+  // Clear checkoutState on the customer display when modal actually unmounts
+  useEffect(() => {
+    return () => {
+      broadcastCustomerDisplay({
+        checkoutState: null
+      });
+    };
+  }, []);
+
+  // Real-time broadcast to secondary customer display on tender or customer updates
   useEffect(() => {
     broadcastCustomerDisplay({
       checkoutState: {
@@ -71,12 +81,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       loyaltyPoints: selectedCustomer?.loyaltyPoints,
       loyaltyTier: selectedCustomer?.tier
     });
-
-    return () => {
-      broadcastCustomerDisplay({
-        checkoutState: null
-      });
-    };
   }, [paymentMethod, receivedAmount, changeToReturn, selectedCustomer]);
 
   // Rapid tender buttons for West African CFA Francs
@@ -118,8 +122,13 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     }
 
     if (paymentMethod === 'split') {
-      if (splitCash + splitMobile !== totalAmount) {
-        setErrorMessage(`Le total ventilé (${(splitCash + splitMobile).toLocaleString()} ${business.currency}) doit être exactement égal au montant total (${totalAmount.toLocaleString()} ${business.currency}).`);
+      const splitTotal = splitCash + splitMobile + splitCredit;
+      if (splitTotal !== totalAmount) {
+        setErrorMessage(`Le total ventilé (${splitTotal.toLocaleString()} ${business.currency}) doit être exactement égal au montant total (${totalAmount.toLocaleString()} ${business.currency}).`);
+        return;
+      }
+      if (splitCredit > 0 && (!customerId || customerId === 'cust_comptoir')) {
+        setErrorMessage('Pour inclure une part à crédit dans le paiement mixte, veuillez sélectionner un client identifié.');
         return;
       }
     }
@@ -129,6 +138,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       const splitDetails = paymentMethod === 'split' ? {
         cash: splitCash,
         [splitMobileType]: splitMobile,
+        ...(splitCredit > 0 ? { credit: splitCredit } : {})
       } : undefined;
 
       const sale = await completeSale(
@@ -152,10 +162,24 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         // ignore in non-canvas environments
       }
 
+      // Pass calculated tender info for customer display:
+      // - For cash: received amount and change
+      // - For credit: 0 received (unpaid balance remaining)
+      // - For split: actual paid amount (total minus credit portion)
+      // - For digital payments: total amount
+      const paidReceived = paymentMethod === 'credit' 
+        ? 0 
+        : paymentMethod === 'cash' 
+          ? receivedAmount 
+          : paymentMethod === 'split'
+            ? Math.max(0, totalAmount - splitCredit)
+            : totalAmount;
+      const changeGiven = paymentMethod === 'cash' ? changeToReturn : 0;
+
       onSuccess(
         sale, 
-        paymentMethod === 'cash' ? receivedAmount : totalAmount, 
-        paymentMethod === 'cash' ? changeToReturn : 0
+        paidReceived, 
+        changeGiven
       );
     } catch (err: any) {
       setErrorMessage(err.message || 'Erreur lors de la validation de la vente');
@@ -339,17 +363,23 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
           {paymentMethod === 'split' && (
             <div className="p-4 bg-indigo-50/50 border border-indigo-200 rounded-xl space-y-3 text-xs">
-              <p className="font-semibold text-indigo-950">Ventilation du paiement :</p>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="flex items-center justify-between">
+                <p className="font-semibold text-indigo-950">Ventilation du paiement :</p>
+                <span className={`text-[11px] font-bold px-2 py-0.5 rounded ${
+                  (splitCash + splitMobile + splitCredit) === totalAmount ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                }`}>
+                  Reste : {Math.max(0, totalAmount - (splitCash + splitMobile + splitCredit)).toLocaleString()} {business.currency}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <div>
-                  <label className="block text-[11px] text-indigo-900 font-medium mb-1">Montant Espèces (Cash) :</label>
+                  <label className="block text-[11px] text-indigo-900 font-medium mb-1">Espèces (Cash) :</label>
                   <input
                     type="number"
                     value={splitCash}
                     onChange={(e) => {
-                      const val = Number(e.target.value);
+                      const val = Math.max(0, Number(e.target.value));
                       setSplitCash(val);
-                      setSplitMobile(Math.max(0, totalAmount - val));
                     }}
                     className="w-full bg-white border border-indigo-300 rounded-lg px-2.5 py-1.5 font-bold text-slate-900"
                   />
@@ -360,25 +390,44 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     type="number"
                     value={splitMobile}
                     onChange={(e) => {
-                      const val = Number(e.target.value);
+                      const val = Math.max(0, Number(e.target.value));
                       setSplitMobile(val);
-                      setSplitCash(Math.max(0, totalAmount - val));
                     }}
                     className="w-full bg-white border border-indigo-300 rounded-lg px-2.5 py-1.5 font-bold text-slate-900"
                   />
                 </div>
+                <div>
+                  <label className="block text-[11px] text-red-900 font-medium mb-1">Part à Crédit :</label>
+                  <input
+                    type="number"
+                    value={splitCredit}
+                    onChange={(e) => {
+                      const val = Math.max(0, Number(e.target.value));
+                      setSplitCredit(val);
+                    }}
+                    placeholder="0"
+                    className="w-full bg-white border border-red-300 rounded-lg px-2.5 py-1.5 font-bold text-red-700"
+                  />
+                </div>
               </div>
-              <div className="flex items-center space-x-2">
-                <span className="text-slate-600">Opérateur Mobile :</span>
-                <select
-                  value={splitMobileType}
-                  onChange={(e) => setSplitMobileType(e.target.value as any)}
-                  className="bg-white border border-indigo-300 rounded px-2 py-1 text-xs"
-                >
-                  <option value="orangeMoney">Orange Money (OM)</option>
-                  <option value="moovMoney">Moov Money</option>
-                  <option value="waveCoris">Wave / Coris</option>
-                </select>
+              <div className="flex items-center justify-between pt-1">
+                <div className="flex items-center space-x-2">
+                  <span className="text-slate-600 text-[11px]">Opérateur Mobile :</span>
+                  <select
+                    value={splitMobileType}
+                    onChange={(e) => setSplitMobileType(e.target.value as any)}
+                    className="bg-white border border-indigo-300 rounded px-2 py-1 text-xs font-medium"
+                  >
+                    <option value="orangeMoney">Orange Money (OM)</option>
+                    <option value="moovMoney">Moov Money</option>
+                    <option value="waveCoris">Wave / Coris</option>
+                  </select>
+                </div>
+                {splitCredit > 0 && (
+                  <span className="text-[11px] text-red-600 font-bold bg-red-50 border border-red-200 px-2 py-0.5 rounded">
+                    Crédit déduit : {splitCredit.toLocaleString()} {business.currency}
+                  </span>
+                )}
               </div>
             </div>
           )}

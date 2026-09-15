@@ -31,9 +31,10 @@ interface ReceiptModalProps {
   business: Business;
   onClose: () => void;
   onCancelSale?: (saleId: string, reason: string) => Promise<void>;
+  autoPrint?: boolean;
 }
 
-export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onClose, onCancelSale }) => {
+export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onClose, onCancelSale, autoPrint = false }) => {
   const [isBlePrinting, setIsBlePrinting] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
   const [isDrawerOpening, setIsDrawerOpening] = useState(false);
@@ -47,6 +48,8 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
   const [usbConnected, setUsbConnected] = useState(
     cashDrawerService.isUsbConnected() || cashDrawerService.isSerialConnected()
   );
+
+  const hasAutoPrintedRef = React.useRef(false);
 
   // Fast Pre-warm: Silently prepare Bluetooth connection in background while receipt is viewed
   useEffect(() => {
@@ -256,6 +259,22 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
       setIsBlePrinting(false);
     }
   };
+
+  // Automatic print on newly validated sale (not when reviewing old sales from history)
+  useEffect(() => {
+    if (!autoPrint || hasAutoPrintedRef.current) return;
+    hasAutoPrintedRef.current = true;
+
+    const timer = setTimeout(() => {
+      if (blePrinter.isConnected()) {
+        handleBlePrint();
+      } else {
+        handlePrint();
+      }
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [autoPrint]);
 
   // Generate WhatsApp preformatted receipt message
   const handleShareWhatsApp = () => {

@@ -391,7 +391,7 @@ class BluetoothPosPrinter {
     }
   }
 
-  // Fast chunked data transmission with optimized MTU
+  // Reliable chunked data transmission respecting printer's advertised write mode (20-byte BLE MTU standard)
   async printData(data: Uint8Array): Promise<void> {
     if (!this.isConnected()) {
       await this.connect(false);
@@ -401,44 +401,34 @@ class BluetoothPosPrinter {
       throw new Error("Imprimante non connectée.");
     }
 
-    // 128 bytes chunk size provides optimal balance for BLE throughput and receiver buffers
-    const CHUNK_SIZE = 128;
-    const canWriteWithoutResponse = Boolean(this.characteristic.properties.writeWithoutResponse);
+    // Standard BLE characteristic payload size is 20 bytes for maximum universal printer compatibility
+    const CHUNK_SIZE = 20;
+    const canWriteWithoutResponse = Boolean(this.characteristic.properties?.writeWithoutResponse);
+    const canWriteWithResponse = Boolean(this.characteristic.properties?.write);
 
     try {
       for (let i = 0; i < data.length; i += CHUNK_SIZE) {
         const chunk = data.slice(i, i + CHUNK_SIZE);
-        if (canWriteWithoutResponse && this.characteristic.writeValueWithoutResponse) {
+        if (canWriteWithoutResponse && typeof this.characteristic.writeValueWithoutResponse === 'function') {
           await this.characteristic.writeValueWithoutResponse(chunk);
-          // 8ms interval is sufficient for thermal printer buffer without stalling
           await new Promise((r) => setTimeout(r, 8));
-        } else {
+        } else if (canWriteWithResponse || typeof this.characteristic.writeValue === 'function') {
           await this.characteristic.writeValue(chunk);
-          await new Promise((r) => setTimeout(r, 15));
+          await new Promise((r) => setTimeout(r, 12));
+        } else {
+          // Fallback to writeValueWithoutResponse if available
+          await this.characteristic.writeValueWithoutResponse(chunk);
+          await new Promise((r) => setTimeout(r, 8));
         }
       }
     } catch (err: any) {
-      console.warn('Bluetooth write interrupted, attempting instant recovery...', err);
+      console.warn('Bluetooth write interrupted, connection invalidated:', err);
       this.characteristic = null;
       if (this.device && this.device.gatt) {
         try { await this.device.gatt.disconnect(); } catch (e) {}
       }
-
-      // Reconnect immediately using cached profile
-      await this.connect(false);
-      if (!this.characteristic) throw new Error("Échec de la reconnexion automatique Bluetooth.");
-
-      // Retry sending
-      for (let i = 0; i < data.length; i += CHUNK_SIZE) {
-        const chunk = data.slice(i, i + CHUNK_SIZE);
-        if (this.characteristic.writeValueWithoutResponse) {
-          await this.characteristic.writeValueWithoutResponse(chunk);
-          await new Promise((r) => setTimeout(r, 10));
-        } else {
-          await this.characteristic.writeValue(chunk);
-          await new Promise((r) => setTimeout(r, 18));
-        }
-      }
+      this.device = null;
+      throw new Error(`Erreur transmission Bluetooth: ${err.message || err}. Veuillez reconnecter l'imprimante.`);
     }
   }
 

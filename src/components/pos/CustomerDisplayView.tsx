@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useApp } from '../../context/AppContext';
 import { 
   CustomerDisplayState, 
   getInitialDisplayState,
   playPosTone,
   subscribeCustomerDisplay,
+  requestCustomerDisplaySync,
   runCustomerDisplaySimulation
 } from '../../lib/customerDisplayService';
 import { 
@@ -35,17 +35,21 @@ import {
 
 interface CustomerDisplayViewProps {
   isStandaloneWindow?: boolean;
+  onBackToPos?: () => void;
 }
 
-export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({ isStandaloneWindow = false }) => {
-  const { setActiveTab } = useApp();
+export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({ 
+  isStandaloneWindow = false,
+  onBackToPos
+}) => {
   const [displayState, setDisplayState] = useState<CustomerDisplayState>(getInitialDisplayState);
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [activeBannerIndex, setActiveBannerIndex] = useState(0);
   const [isLiveConnected, setIsLiveConnected] = useState(true);
-  const [lastSignalAgo, setLastSignalAgo] = useState('Connecté');
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSignalAgo, setLastSignalAgo] = useState('Signal direct (0s)');
   const [simulationRunning, setSimulationRunning] = useState(false);
   const [simulationStep, setSimulationStep] = useState<string | null>(null);
   
@@ -62,7 +66,7 @@ export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({ isStan
       // Update human-readable ping indicator
       const diffSec = Math.floor((Date.now() - lastUpdateRef.current) / 1000);
       if (diffSec < 2) {
-        setLastSignalAgo('Signal immédiat (0s)');
+        setLastSignalAgo('Signal direct (0s)');
       } else if (diffSec < 60) {
         setLastSignalAgo(`Signal il y a ${diffSec}s`);
       } else {
@@ -71,6 +75,19 @@ export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({ isStan
     }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Auto-dismiss completed sale screen after 25s of inactivity
+  useEffect(() => {
+    if (displayState.lastCompletedSale && displayState.items.length === 0) {
+      const dismissTimer = setTimeout(() => {
+        setDisplayState(prev => ({
+          ...prev,
+          lastCompletedSale: null
+        }));
+      }, 25000);
+      return () => clearTimeout(dismissTimer);
+    }
+  }, [displayState.lastCompletedSale, displayState.items.length]);
 
   // Marketing banner rotator for idle state
   useEffect(() => {
@@ -82,23 +99,28 @@ export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({ isStan
 
   // Multi-channel Real-time listener: BroadcastChannel + Storage + CustomEvent + Poller
   useEffect(() => {
-    const unsubscribe = subscribeCustomerDisplay((newState: CustomerDisplayState) => {
-      lastUpdateRef.current = Date.now();
-      setIsLiveConnected(true);
-      setLastSignalAgo('Signal immédiat (0s)');
+    const unsubscribe = subscribeCustomerDisplay(
+      (newState: CustomerDisplayState) => {
+        lastUpdateRef.current = Date.now();
+        setIsLiveConnected(true);
+        setLastSignalAgo('Signal direct (0s)');
 
-      setDisplayState(prevState => {
-        // Play tone on new items or sale if sound enabled
-        if (soundEnabledRef.current) {
-          if (newState.lastCompletedSale && (!prevState.lastCompletedSale || newState.lastCompletedSale.timestamp !== prevState.lastCompletedSale.timestamp)) {
-            playPosTone('success');
-          } else if (newState.items.length > prevState.items.length) {
-            playPosTone('beep');
+        setDisplayState(prevState => {
+          // Play tone on new items or sale if sound enabled
+          if (soundEnabledRef.current) {
+            if (newState.lastCompletedSale && (!prevState.lastCompletedSale || newState.lastCompletedSale.timestamp !== prevState.lastCompletedSale.timestamp)) {
+              playPosTone('success');
+            } else if (newState.items.length > prevState.items.length) {
+              playPosTone('beep');
+            }
           }
-        }
-        return newState;
-      });
-    });
+          return newState;
+        });
+      },
+      (connected: boolean) => {
+        setIsLiveConnected(connected);
+      }
+    );
 
     return () => {
       unsubscribe();
@@ -112,8 +134,22 @@ export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({ isStan
     }
   }, [displayState.items]);
 
-  // Fullscreen handler
-  const toggleFullscreen = () => {
+  // Fullscreen & Screen Management handler
+  const handleFullscreenOrScreen2 = async () => {
+    try {
+      if ('getScreenDetails' in window) {
+        const details = await (window as any).getScreenDetails();
+        const second = details.screens.find((s: any) => !s.isPrimary);
+        if (second && document.documentElement.requestFullscreen) {
+          await (document.documentElement as any).requestFullscreen({ screen: second });
+          setIsFullscreen(true);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('Screen details fallback:', err);
+    }
+
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen().then(() => {
         setIsFullscreen(true);
@@ -123,6 +159,16 @@ export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({ isStan
         setIsFullscreen(false);
       }).catch(err => console.warn('Exit fullscreen error:', err));
     }
+  };
+
+  const requestManualSync = () => {
+    setIsSyncing(true);
+    requestCustomerDisplaySync();
+    setTimeout(() => {
+      setIsSyncing(false);
+      lastUpdateRef.current = Date.now();
+      setIsLiveConnected(true);
+    }, 600);
   };
 
   const handleRunSimulation = () => {
@@ -165,11 +211,8 @@ export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({ isStan
     lastCompletedSale
   } = displayState;
 
-  // Determine if a sale was just completed within the last 15 seconds
-  const isRecentSaleCompleted = 
-    lastCompletedSale && 
-    items.length === 0 && 
-    (Date.now() - (lastCompletedSale.timestamp || 0) < 15000);
+  // The completed sale remains visible until a new cart has items
+  const isRecentSaleCompleted = Boolean(lastCompletedSale && items.length === 0);
 
   const isIdle = items.length === 0 && !isRecentSaleCompleted;
 
@@ -193,7 +236,7 @@ export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({ isStan
         <div className="bg-slate-900 border-b border-indigo-950/80 px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs shrink-0">
           <div className="flex items-center space-x-2.5">
             <button
-              onClick={() => setActiveTab('pos')}
+              onClick={onBackToPos || (() => window.history.back())}
               className="flex items-center space-x-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-xl font-bold border border-slate-700 transition cursor-pointer"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
@@ -233,32 +276,63 @@ export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({ isStan
       )}
 
       {/* 1. TOP HEADER (Always visible) */}
-      <header className="bg-slate-900 border-b border-slate-800/80 px-4 sm:px-6 py-3.5 flex items-center justify-between shadow-lg shrink-0">
+      <header className="bg-slate-900 border-b border-slate-800/80 px-4 sm:px-6 py-3 flex items-center justify-between shadow-lg shrink-0">
         {/* Brand & Store Name */}
         <div className="flex items-center space-x-3.5">
           <div className="h-11 w-11 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-md shadow-blue-500/20 text-white font-black text-xl border border-blue-400/30">
             <Store className="h-6 w-6" />
           </div>
           <div>
-            <h1 className="text-lg sm:text-xl font-extrabold tracking-tight text-white flex items-center gap-2">
-              <span>{businessName || 'BizPilot Burkina'}</span>
-              <span className="inline-flex items-center gap-1 text-[11px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full">
-                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                Afficheur Client
+            <h1 className="text-base sm:text-xl font-extrabold tracking-tight text-white flex items-center gap-2">
+              <span className="truncate max-w-[160px] sm:max-w-xs">{businessName || 'BizPilot Burkina'}</span>
+              <span className="inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full shrink-0">
+                <span className="h-1.5 w-1.5 sm:h-2 sm:w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span className="hidden sm:inline">Afficheur Client</span>
+                <span className="sm:hidden">Écran Client</span>
               </span>
             </h1>
-            <p className="text-xs text-slate-400 font-medium truncate max-w-md">
+            <p className="text-[11px] sm:text-xs text-slate-400 font-medium truncate max-w-xs sm:max-w-md">
               {slogan || address || 'Bienvenue dans notre boutique'}
             </p>
           </div>
         </div>
 
-        {/* Right Controls: Live Clock, Sound & Fullscreen */}
-        <div className="flex items-center space-x-2 sm:space-x-4">
+        {/* Right Controls: Sync Button, Live Clock, Sound & Fullscreen */}
+        <div className="flex items-center space-x-1.5 sm:space-x-3">
+          {/* Real-time Connection Indicator */}
+          <div className="flex items-center">
+            {isLiveConnected ? (
+              <span className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-950/70 border border-emerald-500/40 px-2.5 py-1.5 rounded-xl font-semibold shadow-xs">
+                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span className="hidden md:inline">En direct</span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 text-xs text-amber-400 bg-amber-950/70 border border-amber-500/40 px-2.5 py-1.5 rounded-xl font-semibold shadow-xs">
+                <span className="h-2 w-2 rounded-full bg-amber-400 animate-ping"></span>
+                <span className="hidden md:inline">Attente caisse...</span>
+              </span>
+            )}
+          </div>
+
+          {/* Manual Sync Button */}
+          <button
+            onClick={requestManualSync}
+            disabled={isSyncing}
+            className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-xl border text-[11px] font-medium transition cursor-pointer ${
+              isSyncing 
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' 
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border-slate-700'
+            }`}
+            title="Forcer la resynchronisation avec la caisse"
+          >
+            <Zap className={`h-3.5 w-3.5 text-amber-400 ${isSyncing ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">{isSyncing ? 'Synchronisation...' : 'Resynchroniser'}</span>
+          </button>
+
           {/* Live Digital Clock */}
-          <div className="hidden sm:flex items-center space-x-2 bg-slate-800/80 border border-slate-700/60 rounded-xl px-3.5 py-1.5 text-slate-200 shadow-inner">
-            <Clock className="h-4 w-4 text-blue-400" />
-            <span className="font-mono text-sm font-bold tracking-wider">
+          <div className="hidden sm:flex items-center space-x-2 bg-slate-800/80 border border-slate-700/60 rounded-xl px-3 py-1.5 text-slate-200 shadow-inner">
+            <Clock className="h-3.5 w-3.5 text-blue-400" />
+            <span className="font-mono text-xs sm:text-sm font-bold tracking-wider">
               {currentTime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
             </span>
           </div>
@@ -272,13 +346,15 @@ export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({ isStan
             {soundEnabled ? <Volume2 className="h-4 w-4 text-emerald-400" /> : <VolumeX className="h-4 w-4 text-slate-500" />}
           </button>
 
-          {/* Fullscreen Button */}
+          {/* Fullscreen / Move to 2nd Screen Button */}
           <button
-            onClick={toggleFullscreen}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition cursor-pointer"
-            title={isFullscreen ? 'Quitter le plein écran' : 'Mettre en plein écran (2ème Écran)'}
+            id="btn-fullscreen-customer-display"
+            onClick={handleFullscreenOrScreen2}
+            className="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-sm transition cursor-pointer border border-blue-400/30"
+            title={isFullscreen ? 'Quitter le plein écran (F11 ou Échap)' : 'Basculer en Plein écran (F11)'}
           >
             {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            <span className="hidden sm:inline">{isFullscreen ? 'Quitter Plein Écran' : 'Plein écran (F11)'}</span>
           </button>
         </div>
       </header>
@@ -312,14 +388,52 @@ export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({ isStan
                 </span>
               </div>
 
-              <div className="flex justify-between items-center py-2">
-                <span className="text-base text-slate-300 font-medium">Montant Total Réglé :</span>
-                <span className="text-2xl font-black text-emerald-400 font-mono">
-                  {lastCompletedSale.totalAmount.toLocaleString()} {currency}
-                </span>
-              </div>
+              {lastCompletedSale.paymentMethod === 'credit' ? (
+                <>
+                  <div className="flex justify-between items-center py-2 bg-amber-950/40 border border-amber-600/30 rounded-xl px-4">
+                    <span className="text-base text-amber-300 font-medium">Payé au comptoir :</span>
+                    <span className="text-2xl font-black text-amber-400 font-mono">
+                      0 {currency}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center py-1.5 text-sm text-red-300 px-1 bg-red-950/30 border border-red-800/40 rounded-lg">
+                    <span className="font-semibold">Reste dû à crédit :</span>
+                    <span className="font-mono font-bold text-red-400 text-lg">
+                      {lastCompletedSale.totalAmount.toLocaleString()} {currency}
+                    </span>
+                  </div>
+                </>
+              ) : lastCompletedSale.paymentMethod === 'split' && (lastCompletedSale.creditDue || 0) > 0 ? (
+                <>
+                  <div className="flex justify-between items-center py-2 bg-emerald-950/40 border border-emerald-600/30 rounded-xl px-4">
+                    <span className="text-base text-emerald-300 font-medium">Payé au comptoir :</span>
+                    <span className="text-2xl font-black text-emerald-400 font-mono">
+                      {(lastCompletedSale.totalAmount - (lastCompletedSale.creditDue || 0)).toLocaleString()} {currency}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center py-1.5 text-sm text-red-300 px-3 bg-red-950/30 border border-red-800/40 rounded-xl">
+                    <span className="font-semibold">Part différée à crédit :</span>
+                    <span className="font-mono font-bold text-red-400 text-base">
+                      {lastCompletedSale.creditDue?.toLocaleString()} {currency}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center py-1 text-xs text-slate-400 px-1">
+                    <span>Total de la commande :</span>
+                    <span className="font-mono font-semibold text-slate-300">
+                      {lastCompletedSale.totalAmount.toLocaleString()} {currency}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <div className="flex justify-between items-center py-2">
+                  <span className="text-base text-slate-300 font-medium">Montant Total Réglé :</span>
+                  <span className="text-2xl font-black text-emerald-400 font-mono">
+                    {lastCompletedSale.totalAmount.toLocaleString()} {currency}
+                  </span>
+                </div>
+              )}
 
-              {lastCompletedSale.receivedAmount !== undefined && lastCompletedSale.receivedAmount > lastCompletedSale.totalAmount && (
+              {lastCompletedSale.paymentMethod !== 'credit' && lastCompletedSale.receivedAmount !== undefined && lastCompletedSale.receivedAmount > lastCompletedSale.totalAmount && (
                 <div className="flex justify-between items-center py-1 text-sm text-slate-300">
                   <span className="font-medium">Montant Reçu :</span>
                   <span className="font-mono font-semibold text-slate-200">
@@ -345,7 +459,17 @@ export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({ isStan
               </div>
             </div>
 
-            <div className="mt-8 flex items-center gap-2 text-xs text-slate-500 font-medium">
+            <div className="mt-6 flex flex-col sm:flex-row items-center gap-3">
+              <button
+                onClick={() => setDisplayState(prev => ({ ...prev, lastCompletedSale: null }))}
+                className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-200 px-4 py-2 rounded-xl text-xs font-semibold border border-slate-700 transition cursor-pointer"
+              >
+                <ArrowRight className="h-4 w-4 text-emerald-400" />
+                <span>Passer au client suivant (Écran d'accueil)</span>
+              </button>
+            </div>
+
+            <div className="mt-6 flex items-center gap-2 text-xs text-slate-500 font-medium">
               <ShieldCheck className="h-4 w-4 text-emerald-400" />
               <span>Paiement sécurisé et vérifié • Ticket certifié</span>
             </div>
@@ -377,6 +501,13 @@ export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({ isStan
               <p className="text-base sm:text-xl text-slate-300 font-medium">
                 Veuillez présenter vos articles au comptoir pour l'encaissement.
               </p>
+
+              {/* Total Panier indicator (0 FCFA) */}
+              <div className="inline-flex items-center gap-3 bg-slate-800/90 border border-slate-700/90 rounded-2xl px-5 py-2 text-sm font-semibold shadow-md">
+                <span className="text-slate-400">Total en cours :</span>
+                <span className="text-xl font-black text-emerald-400 font-mono">0 {currency}</span>
+                <span className="text-xs text-slate-400 font-normal border-l border-slate-700 pl-3">0 article</span>
+              </div>
 
               {/* Dynamic Banner Slider */}
               <div className="pt-4">
@@ -425,10 +556,25 @@ export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({ isStan
 
         {/* STATE C: ACTIVE TRANSACTION IN REAL TIME (Items in Cart) */}
         {!isIdle && !isRecentSaleCompleted && (
-          <div className="flex-1 flex flex-col lg:grid lg:grid-cols-12 gap-4 sm:gap-6 overflow-hidden">
+          <div className="flex-1 flex flex-col md:grid md:grid-cols-12 gap-3 sm:gap-6 min-h-0 overflow-hidden">
             
-            {/* LEFT COLUMN: LIVE ARTICLES STREAM (7 Columns) */}
-            <div className="flex-1 lg:col-span-7 flex flex-col bg-slate-900/80 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
+            {/* Top Sticky Bar on Mobile / Narrow screens so totals are NEVER hidden */}
+            <div className="md:hidden bg-gradient-to-r from-blue-900 to-indigo-900 text-white px-4 py-3 rounded-2xl flex items-center justify-between border border-blue-400/30 shadow-lg shrink-0">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-blue-300 block">Total Net à Payer</span>
+                <span className="text-2xl font-black font-mono text-white">
+                  {totalAmount.toLocaleString()} <span className="text-sm font-bold text-blue-200">{currency}</span>
+                </span>
+              </div>
+              <div className="text-right">
+                <span className="text-xs text-blue-200 font-bold bg-blue-800/80 px-2.5 py-1 rounded-lg border border-blue-500/40">
+                  {itemCount} article{itemCount > 1 ? 's' : ''}
+                </span>
+              </div>
+            </div>
+
+            {/* LEFT COLUMN: LIVE ARTICLES STREAM (7 Columns on desktop/tablet) */}
+            <div className="flex-1 md:col-span-7 flex flex-col bg-slate-900/80 border border-slate-800 rounded-3xl overflow-hidden shadow-xl min-h-0">
               
               {/* Last Scanned Item Alert Banner */}
               {lastScannedItem && (
@@ -526,8 +672,8 @@ export const CustomerDisplayView: React.FC<CustomerDisplayViewProps> = ({ isStan
               )}
             </div>
 
-            {/* RIGHT COLUMN: BIG TOTAL & CHECKOUT TENDER DISPLAY (5 Columns) */}
-            <div className="shrink-0 lg:col-span-5 flex flex-col justify-between space-y-4">
+            {/* RIGHT COLUMN: BIG TOTAL & CHECKOUT TENDER DISPLAY (5 Columns on desktop/tablet) */}
+            <div className="shrink-0 md:col-span-5 flex flex-col justify-start space-y-3 sm:space-y-4 overflow-y-auto">
               
               {/* Grand Total Highlight Box */}
               <div className="bg-gradient-to-br from-blue-900/90 via-indigo-950 to-slate-900 rounded-3xl p-6 border-2 border-blue-500/40 shadow-2xl flex flex-col justify-between relative overflow-hidden">

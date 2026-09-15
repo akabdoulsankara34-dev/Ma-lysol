@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Product, Sale } from '../../types';
 import { CheckoutModal } from './CheckoutModal';
@@ -6,6 +6,7 @@ import { ReceiptModal } from './ReceiptModal';
 import { BarcodeScanner } from '../BarcodeScanner';
 import { 
   broadcastCustomerDisplay, 
+  registerCustomerWindow,
   CustomerDisplayItem 
 } from '../../lib/customerDisplayService';
 import { 
@@ -73,6 +74,30 @@ export const PosView: React.FC = () => {
   const [isQuickCheckingOut, setIsQuickCheckingOut] = useState(false);
   const [showCashDrawerModal, setShowCashDrawerModal] = useState(false);
   const [drawerToast, setDrawerToast] = useState<{ reason: string; timestamp: number; hardwareKicked: boolean } | null>(null);
+  const customerDisplayWindowRef = useRef<Window | null>(null);
+
+  // Close customer display window when leaving the POS view or closing browser tab
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (customerDisplayWindowRef.current && !customerDisplayWindowRef.current.closed) {
+        try {
+          customerDisplayWindowRef.current.close();
+        } catch {}
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      // When leaving the POS component/tab, close the secondary customer window
+      if (customerDisplayWindowRef.current && !customerDisplayWindowRef.current.closed) {
+        try {
+          customerDisplayWindowRef.current.close();
+        } catch {}
+        customerDisplayWindowRef.current = null;
+      }
+    };
+  }, []);
 
   // Listen for Cash Drawer Opening events (auto or manual)
   useEffect(() => {
@@ -156,6 +181,8 @@ export const PosView: React.FC = () => {
       subtotal: subtotal,
       discount: overallDiscount,
       totalAmount: totalAmount,
+      // If user adds items into a new cart, clear previous completed sale so client sees current cart
+      ...(displayItems.length > 0 ? { lastCompletedSale: null } : {}),
       lastScannedItem: lastItem ? {
         name: lastItem.product.name,
         quantity: lastItem.quantity,
@@ -172,6 +199,11 @@ export const PosView: React.FC = () => {
     setLastCompletedSale(sale);
     setMobilePosTab('catalog');
 
+    // Compute credit due if sale was credit or split credit
+    const creditDue = sale.paymentMethod === 'credit' 
+      ? sale.total 
+      : sale.paymentBreakdown?.credit || 0;
+
     // Broadcast completed sale for 2nd screen celebratory display & change confirmation
     broadcastCustomerDisplay({
       items: [],
@@ -186,6 +218,8 @@ export const PosView: React.FC = () => {
         totalAmount: sale.total,
         receivedAmount: tenderReceived,
         changeToReturn: tenderChange,
+        creditDue: creditDue,
+        paymentBreakdown: sale.paymentBreakdown,
         paymentMethod: sale.paymentMethod,
         itemCount: sale.items.reduce((acc, it) => acc + it.quantity, 0),
         customerName: sale.customerName,
@@ -242,6 +276,9 @@ export const PosView: React.FC = () => {
     );
     if (!win) {
       setShowDisplayGuideModal(true);
+    } else {
+      customerDisplayWindowRef.current = win;
+      registerCustomerWindow(win);
     }
   };
 
@@ -412,10 +449,10 @@ export const PosView: React.FC = () => {
             id="btn-customer-display-trigger"
             onClick={openCustomerDisplayWindow}
             className="flex items-center space-x-1.5 bg-blue-50 border border-blue-200 hover:bg-blue-100 text-blue-700 px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition shrink-0 cursor-pointer"
-            title="Ouvrir l'Afficheur Client (2ème Écran pour caisse double écran)"
+            title="Ouvrir l’écran client (2ème écran / moniteur de bureau étendu)"
           >
             <Tv className="h-4 w-4 text-blue-600 animate-pulse" />
-            <span className="hidden md:inline">2ème Écran Client</span>
+            <span className="hidden sm:inline">Ouvrir l’écran client</span>
           </button>
 
           <button
@@ -589,7 +626,20 @@ export const PosView: React.FC = () => {
           </div>
           {cart.length > 0 && (
             <button
-              onClick={clearCart}
+              onClick={() => {
+                clearCart();
+                setOverallDiscount(0);
+                broadcastCustomerDisplay({
+                  items: [],
+                  itemCount: 0,
+                  subtotal: 0,
+                  discount: 0,
+                  totalAmount: 0,
+                  lastScannedItem: null,
+                  checkoutState: null,
+                  lastCompletedSale: null
+                });
+              }}
               className="text-xs text-red-600 hover:text-red-700 font-semibold transition shrink-0 ml-1 cursor-pointer"
             >
               Vider
@@ -763,6 +813,7 @@ export const PosView: React.FC = () => {
           business={business}
           onClose={() => setLastCompletedSale(null)}
           onCancelSale={cancelSale}
+          autoPrint={true}
         />
       )}
 
@@ -773,6 +824,7 @@ export const PosView: React.FC = () => {
           business={business}
           onClose={() => setViewReceiptFromHistory(null)}
           onCancelSale={cancelSale}
+          autoPrint={false}
         />
       )}
 
@@ -960,12 +1012,17 @@ export const PosView: React.FC = () => {
 
               {/* Guide steps */}
               <div className="pt-2 border-t border-slate-100 space-y-2">
-                <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wider">Comment positionner le 2ème écran :</h4>
-                <ol className="list-decimal pl-4 space-y-1.5 text-xs text-slate-500">
-                  <li>Cliquez sur <strong>"Ouvrir la Fenêtre de l'Écran Client"</strong> ci-dessus.</li>
-                  <li>Glissez la nouvelle fenêtre ouverte vers votre deuxième moniteur ou écran orienté client.</li>
-                  <li>Appuyez sur la touche <strong>F11</strong> (ou le bouton Plein Écran) pour masquer les barres du navigateur.</li>
+                <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wider">Configuration Windows & Double Écran :</h4>
+                <ol className="list-decimal pl-4 space-y-1.5 text-xs text-slate-600">
+                  <li><strong>Configurer Windows</strong> pour étendre le bureau sur les deux écrans (Touche Windows + P &rarr; <em>Étendre</em>).</li>
+                  <li>Dans la caisse, cliquer sur <strong>« Ouvrir l’écran client »</strong>. Autoriser les fenêtres contextuelles (pop-ups) si le navigateur les bloque.</li>
+                  <li>Déplacer cette fenêtre sur le deuxième écran, puis cliquer sur <strong>« Plein écran »</strong> (ou la touche <strong>F11</strong>).</li>
+                  <li>Le panier et son total sont transmis instantanément à la fenêtre cliente. Après validation, elle conserve le total payé jusqu’au prochain panier.</li>
+                  <li>La fenêtre se ferme automatiquement lorsque l’on quitte la vue caisse.</li>
                 </ol>
+                <div className="p-2.5 bg-slate-100 rounded-xl text-[11px] text-slate-500 font-medium">
+                  💡 <em>Note : Ce mode concerne un moniteur de bureau standard (HDMI/VGA/DisplayPort), pas un afficheur série/USB à 2 lignes.</em>
+                </div>
               </div>
             </div>
           </div>
