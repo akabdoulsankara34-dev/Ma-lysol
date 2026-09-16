@@ -1,4 +1,4 @@
-import { Sale, Business } from '../types';
+import { Sale, Business, Avoir } from '../types';
 import { cashDrawerService } from './cashDrawerService';
 
 export interface PrintReceiptOptions {
@@ -555,3 +555,386 @@ export function openReceiptInNewTab(sale: Sale, business: Business, kickDrawer =
   const url = URL.createObjectURL(blob);
   window.open(url, '_blank');
 }
+
+/**
+ * Generates an ESC/POS 80mm/58mm thermal-compatible HTML voucher for store credit / Avoirs.
+ */
+export function generateAvoirHtml(
+  avoir: Avoir,
+  business: Business,
+  options: PrintReceiptOptions = {}
+): string {
+  const paperWidth = options.paperWidth || '80mm';
+  const is58mm = paperWidth === '58mm';
+
+  const dateFormatted = new Date(avoir.dateCreation).toLocaleDateString('fr-FR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+  const timeFormatted = new Date(avoir.dateCreation).toLocaleTimeString('fr-FR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  return `<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Avoir - ${escapeHtml(avoir.numero)}</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    @page {
+      size: ${paperWidth} auto;
+      margin: 0mm;
+    }
+    body {
+      font-family: 'Courier New', Courier, monospace, monospace;
+      font-size: ${is58mm ? '12px' : '13px'};
+      line-height: 1.3;
+      color: #000000;
+      background: #ffffff;
+      padding: 8px 10px;
+      width: ${paperWidth};
+      max-width: 100%;
+      margin: 0 auto;
+    }
+    .text-center { text-align: center; }
+    .text-left { text-align: left; }
+    .text-right { text-align: right; }
+    .font-bold { font-weight: 800; }
+    .uppercase { text-transform: uppercase; }
+
+    .divider {
+      border-top: 1.5px dashed #000000;
+      margin: 6px 0;
+    }
+    .divider-double {
+      border-top: 2.5px solid #000000;
+      margin: 8px 0;
+    }
+
+    .store-name {
+      font-size: ${is58mm ? '16px' : '18px'};
+      font-weight: 900;
+      margin-bottom: 2px;
+      color: #000000;
+    }
+    .store-info {
+      font-size: ${is58mm ? '11px' : '12px'};
+      font-weight: 600;
+      color: #000000;
+    }
+
+    .voucher-title-box {
+      border: 2px solid #000000;
+      padding: 6px 4px;
+      margin: 8px 0;
+      text-align: center;
+      background: #ffffff;
+    }
+    .voucher-title {
+      font-size: ${is58mm ? '13px' : '15px'};
+      font-weight: 900;
+      letter-spacing: 0.5px;
+    }
+    .voucher-number {
+      font-size: ${is58mm ? '16px' : '18px'};
+      font-weight: 900;
+      margin-top: 2px;
+      letter-spacing: 1px;
+    }
+
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      margin: 3px 0;
+      font-size: ${is58mm ? '11.5px' : '12.5px'};
+    }
+
+    .amount-box {
+      border: 2.5px double #000000;
+      padding: 10px 4px;
+      margin: 10px 0;
+      text-align: center;
+      background: #f8fafc;
+    }
+    .amount-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .amount-val {
+      font-size: ${is58mm ? '20px' : '24px'};
+      font-weight: 900;
+      letter-spacing: 0.5px;
+      margin-top: 3px;
+    }
+
+    .notice-box {
+      border: 1px dashed #000000;
+      padding: 6px;
+      margin: 8px 0;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+
+    .barcode-sim {
+      font-family: monospace;
+      letter-spacing: 3px;
+      font-size: 14px;
+      font-weight: 900;
+      margin: 6px 0 2px 0;
+      text-align: center;
+    }
+
+    .screen-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin-bottom: 12px;
+      padding: 8px;
+      background: #f1f5f9;
+      border-radius: 8px;
+    }
+    .btn {
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: bold;
+      border-radius: 6px;
+      cursor: pointer;
+      border: none;
+      font-family: sans-serif;
+    }
+    .btn-primary { background: #0f172a; color: #fff; }
+    .btn-secondary { background: #cbd5e1; color: #1e293b; }
+
+    @media print {
+      .screen-actions { display: none !important; }
+      body { padding: 4px 6px 12px 6px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="screen-actions" id="screen-actions">
+    <button class="btn btn-primary" onclick="window.print()">🖨️ Imprimer l'Avoir</button>
+    <button class="btn btn-secondary" onclick="window.close()">Fermer</button>
+  </div>
+
+  <!-- Store Header -->
+  <div class="text-center">
+    <div class="store-name uppercase">${escapeHtml(business.name)}</div>
+    ${business.city ? `<div class="store-info">${escapeHtml(business.city)}</div>` : ''}
+    ${business.phone ? `<div class="store-info font-bold">Tél : ${escapeHtml(business.phone)}</div>` : ''}
+    ${business.ifu ? `<div class="store-info">IFU : ${escapeHtml(business.ifu)}</div>` : ''}
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Title & Number -->
+  <div class="voucher-title-box">
+    <div class="voucher-title uppercase">*** RECONNAISSANCE DE DETTE ***</div>
+    <div class="voucher-number">${escapeHtml(avoir.numero)}</div>
+    <div style="font-size: 10px; font-weight: 700; margin-top: 2px;">RELIQUAT MONNAIE / AVOIR CLIENT</div>
+  </div>
+
+  <!-- Meta Info -->
+  <div class="meta-row">
+    <span>Date :</span>
+    <span class="font-bold">${dateFormatted} à ${timeFormatted}</span>
+  </div>
+  <div class="meta-row">
+    <span>Caissier :</span>
+    <span class="font-bold">${escapeHtml(avoir.caissierNom || 'Caisse')}</span>
+  </div>
+  ${avoir.venteReceiptNumber ? `
+    <div class="meta-row">
+      <span>Ticket Vente N° :</span>
+      <span class="font-bold">${escapeHtml(avoir.venteReceiptNumber)}</span>
+    </div>
+  ` : ''}
+  ${avoir.clientNom ? `
+    <div class="meta-row">
+      <span>Client :</span>
+      <span class="font-bold">${escapeHtml(avoir.clientNom)}</span>
+    </div>
+  ` : ''}
+  ${avoir.clientTel ? `
+    <div class="meta-row">
+      <span>Téléphone :</span>
+      <span class="font-bold">${escapeHtml(avoir.clientTel)}</span>
+    </div>
+  ` : ''}
+
+  <!-- Amount Highlight Box -->
+  <div class="amount-box">
+    <div class="amount-label">MONTANT DE L'AVOIR :</div>
+    <div class="amount-val">${avoir.montant.toLocaleString('fr-FR')} ${escapeHtml(business.currency)}</div>
+  </div>
+
+  <!-- Prominent Legal Notice -->
+  <div class="notice-box">
+    <div style="font-weight: 900; font-size: 11px; margin-bottom: 3px; letter-spacing: 0.5px;">*** MENTION OBLIGATOIRE ***</div>
+    <div style="font-weight: 800; font-size: 11px;">À FAIRE VALOIR SUR UN PROCHAIN ACHAT</div>
+    <div style="font-size: 10px; margin-top: 3px; line-height: 1.35;">
+      Présentation obligatoire de ce ticket original en caisse lors du règlement.<br />
+      Non remboursable en espèces sauf accord de la direction. Valable dans tous nos points de vente.
+    </div>
+  </div>
+
+  <!-- Barcode Representation -->
+  <div class="text-center">
+    <div class="barcode-sim">||| | | |||| | || |||</div>
+    <div style="font-size: 10px; font-weight: 800; font-family: monospace;">* ${escapeHtml(avoir.numero)} *</div>
+  </div>
+
+  <div class="divider-double"></div>
+
+  <div class="text-center" style="font-size: 9px; font-weight: 700; margin-top: 6px;">
+    BIZPILOT BURKINA • MODULE AVOIRS & CAISSE
+  </div>
+</body>
+</html>`;
+}
+
+/**
+ * Universal printing for Avoir tickets.
+ */
+export async function printAvoir(
+  avoir: Avoir,
+  business: Business,
+  options: PrintReceiptOptions = {}
+): Promise<{ success: boolean; fallbackType?: 'iframe' | 'portal' | 'popup_needed'; blobUrl?: string; message?: string }> {
+  const htmlContent = generateAvoirHtml(avoir, business, options);
+
+  try {
+    const printSuccess = await new Promise<boolean>((resolve) => {
+      let resolved = false;
+      const iframe = document.createElement('iframe');
+      iframe.setAttribute(
+        'style',
+        'position:fixed;top:-10000px;left:-10000px;width:80mm;height:100px;border:none;visibility:hidden;z-index:-1;'
+      );
+      document.body.appendChild(iframe);
+
+      const cleanup = () => {
+        try {
+          if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+        } catch {}
+      };
+
+      const timer = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          cleanup();
+          resolve(false);
+        }
+      }, 4000);
+
+      try {
+        const iframeDoc = iframe.contentWindow?.document || iframe.contentDocument;
+        if (!iframeDoc) {
+          clearTimeout(timer);
+          cleanup();
+          resolve(false);
+          return;
+        }
+
+        iframeDoc.open();
+        iframeDoc.write(htmlContent);
+        iframeDoc.close();
+
+        setTimeout(() => {
+          try {
+            iframe.contentWindow?.focus();
+            iframe.contentWindow?.print();
+            if (!resolved) {
+              resolved = true;
+              clearTimeout(timer);
+              setTimeout(cleanup, 1500);
+              resolve(true);
+            }
+          } catch (err) {
+            if (!resolved) {
+              resolved = true;
+              clearTimeout(timer);
+              cleanup();
+              resolve(false);
+            }
+          }
+        }, 200);
+      } catch (err) {
+        clearTimeout(timer);
+        cleanup();
+        resolve(false);
+      }
+    });
+
+    if (printSuccess) {
+      return { success: true };
+    }
+  } catch {}
+
+  const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+  const blobUrl = URL.createObjectURL(blob);
+  try {
+    const newWindow = window.open(blobUrl, '_blank');
+    if (newWindow) {
+      return {
+        success: true,
+        fallbackType: 'popup_needed',
+        blobUrl,
+        message: 'Ticket d\'avoir ouvert pour impression.',
+      };
+    }
+  } catch {}
+
+  return {
+    success: false,
+    fallbackType: 'popup_needed',
+    blobUrl,
+    message: "Impossible d'imprimer directement. Utilisez l'ouverture dans un nouvel onglet.",
+  };
+}
+
+export function downloadAvoir(avoir: Avoir, business: Business): void {
+  const htmlContent = generateAvoirHtml(avoir, business);
+  const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Avoir_${avoir.numero}.html`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 1000);
+}
+
+export function openAvoirInNewTab(avoir: Avoir, business: Business): void {
+  const htmlContent = generateAvoirHtml(avoir, business);
+  const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank');
+}
+
+// Re-export dedicated ESC/POS functions for avoirs
+export {
+  printAvoirEscPos,
+  buildAvoirEscPosBuffer,
+  printAvoirViaBluetooth,
+  type AvoirEscPosPrintOptions,
+} from './blePrinter';
+
+

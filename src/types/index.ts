@@ -7,6 +7,7 @@ export type NavigationTab =
   | 'customers' 
   | 'expenses' 
   | 'cash_register' 
+  | 'avoirs'
   | 'proformas' 
   | 'invoices'
   | 'expiry' 
@@ -16,7 +17,7 @@ export type NavigationTab =
   | 'customer_display'
   | 'admin';
 
-export type PaymentMethod = 'cash' | 'orange_money' | 'moov_money' | 'wave_coris' | 'credit' | 'split';
+export type PaymentMethod = 'cash' | 'orange_money' | 'moov_money' | 'wave_coris' | 'credit' | 'split' | 'avoir';
 
 export type StockMovementType = 'in_purchase' | 'out_manual' | 'sale' | 'return_customer' | 'damaged_loss' | 'inventory_adjustment';
 
@@ -135,11 +136,18 @@ export interface Sale {
     moovMoney?: number;
     waveCoris?: number;
     credit?: number;
+    avoir?: number;
   };
   loyaltyPointsUsed?: number;
   loyaltyDiscount?: number;
   loyaltyPointsEarned?: number;
   quotationId?: string;
+  avoirUsedId?: string;
+  avoirUsedNumero?: string;
+  avoirUsedAmount?: number;
+  avoirGeneratedId?: string;
+  avoirGeneratedNumero?: string;
+  avoirGeneratedAmount?: number;
   notes?: string;
   status?: 'completed' | 'cancelled';
   cancelledAt?: string;
@@ -300,6 +308,31 @@ export interface NotificationItem {
   linkTab?: NavigationTab;
 }
 
+export type AvoirStatus = 'actif' | 'utilise' | 'rembourse';
+
+export interface Avoir {
+  id: string;
+  numero: string; // Auto-incrémenté format AV-0001
+  commerceId: string;
+  businessId: string;
+  venteId: string; // Vente d'origine
+  venteReceiptNumber?: string;
+  clientNom?: string;
+  clientTel?: string;
+  montant: number;
+  dateCreation: string;
+  statut: AvoirStatus;
+  venteUtilisationId?: string; // Vente où l'avoir a été utilisé
+  venteUtilisationReceiptNumber?: string;
+  dateUtilisation?: string;
+  dateRemboursement?: string;
+  caissierId: string;
+  caissierNom?: string;
+  rembourseParId?: string;
+  rembourseParNom?: string;
+  notes?: string;
+}
+
 export interface BusinessSummary {
   todaySales: number;
   todaySalesCount: number;
@@ -316,6 +349,8 @@ export interface BusinessSummary {
   cancelledSalesCount?: number;
   cancelledSalesAmount?: number;
   activeCashSession?: CashSession | null;
+  totalAvoirsActifs?: number;
+  countAvoirsActifs?: number;
 }
 
 export interface QueuedMutation {

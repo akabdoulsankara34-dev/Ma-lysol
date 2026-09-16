@@ -12,7 +12,8 @@ import {
   Check, 
   Coins,
   ShieldCheck,
-  UserPlus
+  UserPlus,
+  Ticket
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -33,7 +34,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   onSuccess,
   onClose,
 }) => {
-  const { business, customers, addCustomer, completeSale } = useApp();
+  const { business, customers, addCustomer, completeSale, avoirs, getAvoirByNumero } = useApp();
 
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [customerId, setCustomerId] = useState<string>(selectedCustomerId || '');
@@ -41,6 +42,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [notes, setNotes] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Avoir state
+  const [avoirCodeInput, setAvoirCodeInput] = useState<string>('');
+  const [convertChangeToAvoir, setConvertChangeToAvoir] = useState<boolean>(false);
 
   // Split payment state
   const [splitCash, setSplitCash] = useState<number>(Math.floor(totalAmount / 2));
@@ -133,6 +138,22 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       }
     }
 
+    if (paymentMethod === 'avoir') {
+      const foundAvoir = getAvoirByNumero(avoirCodeInput);
+      if (!foundAvoir) {
+        setErrorMessage("Veuillez saisir un code d'avoir valide (ex: AV-0001).");
+        return;
+      }
+      if (foundAvoir.statut !== 'actif') {
+        setErrorMessage(`Cet avoir (${foundAvoir.numero}) n'est plus actif (statut: ${foundAvoir.statut}).`);
+        return;
+      }
+      if (foundAvoir.montant < totalAmount) {
+        setErrorMessage(`Le montant de cet avoir (${foundAvoir.montant.toLocaleString()} ${business.currency}) est insuffisant pour régler le total (${totalAmount.toLocaleString()} ${business.currency}).`);
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
       const splitDetails = paymentMethod === 'split' ? {
@@ -141,13 +162,47 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         ...(splitCredit > 0 ? { credit: splitCredit } : {})
       } : undefined;
 
+      let avoirDetails: {
+        usedAvoirId?: string;
+        usedAvoirNumero?: string;
+        usedAvoirAmount?: number;
+        generatedAvoirAmount?: number;
+        generatedClientNom?: string;
+        generatedClientTel?: string;
+      } | undefined = undefined;
+
+      if (paymentMethod === 'avoir') {
+        const found = getAvoirByNumero(avoirCodeInput);
+        if (found) {
+          const surplus = found.montant - totalAmount;
+          avoirDetails = {
+            usedAvoirId: found.id,
+            usedAvoirNumero: found.numero,
+            usedAvoirAmount: totalAmount,
+            ...(surplus > 0 ? {
+              generatedAvoirAmount: surplus,
+              generatedClientNom: selectedCustomer?.name || found.clientNom,
+              generatedClientTel: selectedCustomer?.phone || found.clientTel,
+            } : {})
+          };
+        }
+      } else if (paymentMethod === 'cash' && convertChangeToAvoir && changeToReturn > 0) {
+        avoirDetails = {
+          generatedAvoirAmount: changeToReturn,
+          generatedClientNom: selectedCustomer?.name,
+          generatedClientTel: selectedCustomer?.phone,
+        };
+      }
+
       const sale = await completeSale(
         paymentMethod,
         customerId || undefined,
         selectedCustomer?.name,
         discount,
         splitDetails,
-        notes.trim() || undefined
+        notes.trim() || undefined,
+        0,
+        avoirDetails
       );
 
       // Trigger celebratory confetti burst
@@ -314,6 +369,21 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 <Split className={`h-5 w-5 ${paymentMethod === 'split' ? 'text-indigo-600' : 'text-slate-500'}`} />
                 <span className="text-xs mt-2">Paiement Mixte</span>
               </button>
+
+              {/* Avoir / Bon d'achat */}
+              <button
+                type="button"
+                id="pm-avoir"
+                onClick={() => setPaymentMethod('avoir')}
+                className={`p-3 rounded-xl border text-left flex flex-col justify-between transition ${
+                  paymentMethod === 'avoir'
+                    ? 'border-emerald-600 bg-emerald-50 text-emerald-950 ring-2 ring-emerald-500/20 font-semibold'
+                    : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                }`}
+              >
+                <Ticket className={`h-5 w-5 ${paymentMethod === 'avoir' ? 'text-emerald-600' : 'text-slate-500'}`} />
+                <span className="text-xs mt-2">Avoir / Bon</span>
+              </button>
             </div>
           </div>
 
@@ -358,6 +428,106 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   {changeToReturn.toLocaleString()} {business.currency}
                 </span>
               </div>
+
+              {/* Change converted to Avoir toggle */}
+              {changeToReturn > 0 && (
+                <label className="flex items-center space-x-2 p-2.5 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-950 text-xs font-semibold cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={convertChangeToAvoir}
+                    onChange={(e) => setConvertChangeToAvoir(e.target.checked)}
+                    className="h-4 w-4 text-emerald-600 rounded"
+                  />
+                  <span>
+                    Convertir le rendu ({changeToReturn.toLocaleString()} {business.currency}) en <strong>Avoir Client</strong> (ex: manque de monnaie pièce)
+                  </span>
+                </label>
+              )}
+            </div>
+          )}
+
+          {paymentMethod === 'avoir' && (
+            <div className="p-4 bg-emerald-50/50 border border-emerald-200 rounded-xl space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-emerald-950">Code ou N° du Bon d'Avoir :</label>
+                <span className="text-[11px] text-emerald-700 font-bold">Déduction directe</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <input
+                  id="input-avoir-code"
+                  type="text"
+                  placeholder="ex: AV-0001"
+                  value={avoirCodeInput}
+                  onChange={(e) => setAvoirCodeInput(e.target.value.toUpperCase())}
+                  className="w-full bg-white border border-emerald-300 rounded-lg px-3 py-2 text-sm font-mono font-bold text-slate-900 uppercase focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              {/* Check avoir feedback */}
+              {(() => {
+                if (!avoirCodeInput.trim()) {
+                  const activeAvoirs = avoirs.filter(a => a.statut === 'actif');
+                  if (activeAvoirs.length > 0) {
+                    return (
+                      <div className="space-y-1.5 pt-1">
+                        <span className="text-[11px] text-slate-500 font-medium">Bons actifs disponibles :</span>
+                        <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                          {activeAvoirs.map(a => (
+                            <button
+                              key={a.id}
+                              type="button"
+                              onClick={() => setAvoirCodeInput(a.numero)}
+                              className="px-2 py-1 bg-white hover:bg-emerald-100 border border-emerald-300 rounded text-[11px] font-mono font-bold text-emerald-900 transition"
+                            >
+                              {a.numero} ({a.montant.toLocaleString()} F)
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                }
+
+                const found = getAvoirByNumero(avoirCodeInput);
+                if (!found) {
+                  return (
+                    <div className="text-xs text-red-600 flex items-center space-x-1 font-medium">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                      <span>Aucun avoir trouvé avec le code "{avoirCodeInput}".</span>
+                    </div>
+                  );
+                }
+
+                if (found.statut !== 'actif') {
+                  return (
+                    <div className="text-xs text-amber-700 flex items-center space-x-1 font-medium">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                      <span>Cet avoir n'est plus actif (statut: {found.statut}).</span>
+                    </div>
+                  );
+                }
+
+                const diff = found.montant - totalAmount;
+
+                return (
+                  <div className="p-2.5 rounded-lg bg-emerald-100/70 border border-emerald-300 text-xs space-y-1">
+                    <div className="flex items-center justify-between font-bold text-emerald-950">
+                      <span>✓ Avoir valide : {found.montant.toLocaleString()} {business.currency}</span>
+                      {found.clientNom && <span className="text-slate-700">Client: {found.clientNom}</span>}
+                    </div>
+                    {diff >= 0 ? (
+                      <p className="text-emerald-800">
+                        Total panier couvert à 100%. {diff > 0 && `Un nouveau bon d'avoir de ${diff.toLocaleString()} ${business.currency} sera émis pour le reliquat restant.`}
+                      </p>
+                    ) : (
+                      <p className="text-amber-800 font-bold">
+                        Avoir inférieur au total. Reste à payer : {Math.abs(diff).toLocaleString()} {business.currency}. (Utilisez le paiement mixte si nécessaire).
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
 

@@ -20,6 +20,7 @@ import {
   Percent, 
   AlertTriangle,
   Receipt,
+  Ticket,
   Package,
   Layers,
   History,
@@ -56,7 +57,8 @@ export const PosView: React.FC = () => {
     currentUser,
     completeSale,
     cancelSale,
-    setActiveTab
+    setActiveTab,
+    summary
   } = useApp();
 
   const [mobilePosTab, setMobilePosTab] = useState<'catalog' | 'cart'>('catalog');
@@ -463,6 +465,22 @@ export const PosView: React.FC = () => {
           >
             <History className="h-4 w-4 text-slate-500" />
             <span className="hidden sm:inline">Dernières Ventes</span>
+          </button>
+
+          {/* Quick Avoirs Trigger */}
+          <button
+            id="btn-pos-avoirs-trigger"
+            onClick={() => setActiveTab('avoirs')}
+            className="flex items-center space-x-1.5 bg-emerald-50 border border-emerald-300 hover:bg-emerald-100 text-emerald-900 px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition shrink-0 cursor-pointer"
+            title="Consulter et émettre des avoirs / bons d'achat"
+          >
+            <Ticket className="h-4 w-4 text-emerald-600" />
+            <span className="hidden sm:inline">Avoirs</span>
+            {summary.countAvoirsActifs && summary.countAvoirsActifs > 0 ? (
+              <span className="ml-0.5 px-1.5 py-0.5 bg-emerald-600 text-white rounded-full text-[10px] font-black leading-none">
+                {summary.countAvoirsActifs}
+              </span>
+            ) : null}
           </button>
         </div>
 

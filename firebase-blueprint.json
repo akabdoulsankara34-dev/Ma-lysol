@@ -149,6 +149,33 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["name", "phone", "role"]
+    },
+    "avoirs": {
+      "title": "Avoir",
+      "description": "Reconnaissance de dette / avoir monnaie émis pour un client",
+      "type": "object",
+      "properties": {
+        "numero": { "type": "string", "description": "Numéro auto-incrémenté format AV-0001" },
+        "commerceId": { "type": "string", "description": "Identifiant du commerce" },
+        "businessId": { "type": "string", "description": "Identifiant entreprise BizPilot" },
+        "venteId": { "type": "string", "description": "Référence vente d'origine" },
+        "venteReceiptNumber": { "type": "string" },
+        "clientNom": { "type": "string" },
+        "clientTel": { "type": "string" },
+        "montant": { "type": "number" },
+        "dateCreation": { "type": "string", "format": "date-time" },
+        "statut": { "type": "string", "enum": ["actif", "utilise", "rembourse"] },
+        "venteUtilisationId": { "type": "string" },
+        "venteUtilisationReceiptNumber": { "type": "string" },
+        "dateUtilisation": { "type": "string", "format": "date-time" },
+        "dateRemboursement": { "type": "string", "format": "date-time" },
+        "caissierId": { "type": "string" },
+        "caissierNom": { "type": "string" },
+        "rembourseParId": { "type": "string" },
+        "rembourseParNom": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["numero", "montant", "statut", "dateCreation"]
     }
   }
 }

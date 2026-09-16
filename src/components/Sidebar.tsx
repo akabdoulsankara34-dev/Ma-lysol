@@ -15,6 +15,7 @@ import {
   FileSpreadsheet,
   Barcode,
   FileText,
+  Ticket,
   Tv,
   ChevronLeft,
   ChevronRight
@@ -87,6 +88,14 @@ export const Sidebar: React.FC = () => {
       label: 'Facturation Client',
       icon: FileText,
       badge: null,
+      allowed: true,
+    },
+    {
+      id: 'avoirs' as const,
+      label: 'Avoirs & Bons',
+      icon: Ticket,
+      badge: (summary.countAvoirsActifs && summary.countAvoirsActifs > 0) ? `${summary.countAvoirsActifs}` : null,
+      badgeColor: 'bg-emerald-500 text-slate-950 font-bold',
       allowed: true,
     },
     {

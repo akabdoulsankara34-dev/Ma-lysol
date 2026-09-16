@@ -1,4 +1,5 @@
 // ESC/POS Command Generator and Web Bluetooth POS-80 / POS-58 Printer Handler
+import { Business, Avoir } from '../types';
 
 export interface BluetoothPrinterDevice {
   device: any;
@@ -123,6 +124,30 @@ export class EscPosEncoder {
   cut(): this {
     this.lineFeed(3);
     this.buffer.push(GS, 0x56, 0x42, 0x00);
+    return this;
+  }
+
+  // 1D Barcode (CODE39)
+  barcode(data: string, type: 'CODE39' = 'CODE39', height = 55): this {
+    // GS h height (1 - 255)
+    this.buffer.push(GS, 0x68, Math.min(Math.max(height, 20), 200));
+    // GS w width module (2 or 3)
+    this.buffer.push(GS, 0x77, 2);
+    // GS H text position (2 = below barcode, 0 = none)
+    this.buffer.push(GS, 0x48, 2);
+    // GS f font (0 = Font A)
+    this.buffer.push(GS, 0x66, 0);
+
+    const cleanData = data.toUpperCase().trim();
+    if (type === 'CODE39') {
+      // CODE39: GS k 4 <data> 0x00
+      this.buffer.push(GS, 0x6B, 4);
+      for (let i = 0; i < cleanData.length; i++) {
+        const code = cleanData.charCodeAt(i);
+        this.buffer.push(code);
+      }
+      this.buffer.push(0x00);
+    }
     return this;
   }
 
@@ -477,3 +502,166 @@ class BluetoothPosPrinter {
 }
 
 export const blePrinter = new BluetoothPosPrinter();
+
+export interface AvoirEscPosPrintOptions {
+  paperWidth?: '80mm' | '58mm';
+  autoCut?: boolean;
+  openDrawer?: boolean;
+  kickDrawer?: boolean;
+}
+
+/**
+ * Builds the complete ESC/POS binary command stream for an Avoir / Store Credit voucher.
+ * Strictly respects commercial standards and requirements:
+ * - Numéro d'avoir mis en évidence (caractères géants 2x2, centré, encadré)
+ * - Montant d'avoir clairement mis en valeur (caractères géants 2x2, encadré double filet)
+ * - Mention obligatoire réglementaire et contractuelle (à faire valoir sur un prochain achat, présentation obligatoire)
+ * - En-tête commerçant complet (Raison sociale, IFU, Tél, Ville)
+ * - Traçabilité (Date et heure d'émission, Nom du caissier, Ticket vente d'origine, Bénéficiaire)
+ * - Code-barres 1D standard (CODE39) pour lecture douchette optique en caisse
+ * - Coupe de papier automatique ESC/POS
+ */
+export function buildAvoirEscPosBuffer(
+  avoir: Avoir,
+  business: Business,
+  options: AvoirEscPosPrintOptions = {}
+): Uint8Array {
+  const is58mm = options.paperWidth === '58mm';
+  const lineWidth = is58mm ? 32 : 42;
+  const encoder = new EscPosEncoder();
+
+  encoder.initialize();
+
+  // Optionnel : ouverture du tiroir caisse
+  if (options.openDrawer || options.kickDrawer) {
+    encoder.openDrawer(0);
+  }
+
+  // 1. En-tête Commerçant (Centré, Gras, Grand)
+  encoder.align('center');
+  encoder.bold(true).doubleStrike(true).textSize(2, 2);
+  encoder.textLine(business.name.toUpperCase());
+  encoder.textSize(1, 1).bold(false).doubleStrike(false);
+
+  if (business.sector) encoder.textLine(business.sector);
+  if (business.city) encoder.textLine(business.city);
+  if (business.phone) encoder.textLine(`Tel : ${business.phone}`);
+  if (business.ifu) encoder.textLine(`N IFU : ${business.ifu}`);
+  encoder.divider('-', lineWidth);
+
+  // 2. Titre & Numéro du Titre (Numéro d'avoir mis en valeur)
+  encoder.bold(true).doubleStrike(true);
+  encoder.textLine('RECONNAISSANCE DE DETTE');
+  encoder.textSize(1, 2);
+  encoder.textLine('*** BON D\'AVOIR ***');
+  encoder.textSize(2, 2);
+  encoder.textLine(avoir.numero);
+  encoder.textSize(1, 1).bold(false).doubleStrike(false);
+  encoder.textLine('RELIQUAT MONNAIE / AVOIR CLIENT');
+  encoder.divider('-', lineWidth);
+
+  // 3. Métadonnées d'Émission & Traçabilité Caisse
+  encoder.align('left');
+  const d = new Date(avoir.dateCreation);
+  const dateFormatted = `${d.toLocaleDateString('fr-FR')} ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+  encoder.row('Date :', dateFormatted, lineWidth);
+  encoder.row('Caissier :', (avoir.caissierNom || 'Caisse').slice(0, lineWidth - 11), lineWidth);
+
+  if (avoir.venteReceiptNumber) {
+    encoder.row('Ticket origine :', `#${avoir.venteReceiptNumber}`, lineWidth);
+  }
+  if (avoir.clientNom) {
+    encoder.row('Beneficiaire :', avoir.clientNom.slice(0, lineWidth - 15), lineWidth);
+  }
+  if (avoir.clientTel) {
+    encoder.row('Telephone :', avoir.clientTel, lineWidth);
+  }
+  if (avoir.notes) {
+    encoder.row('Motif :', avoir.notes.slice(0, lineWidth - 9), lineWidth);
+  }
+
+  // 4. Montant de l'Avoir (Mis en valeur en grands caractères)
+  encoder.divider('=', lineWidth);
+  encoder.align('center');
+  encoder.bold(true).doubleStrike(true);
+  encoder.textLine("MONTANT DE L'AVOIR :");
+  encoder.textSize(2, 2);
+  encoder.textLine(`${avoir.montant.toLocaleString('fr-FR')} ${business.currency}`);
+  encoder.textSize(1, 1).bold(false).doubleStrike(false);
+  encoder.divider('=', lineWidth);
+
+  // 5. Mention Obligatoire Réglementaire & Conditions Légales
+  encoder.align('center');
+  encoder.bold(true);
+  encoder.textLine('*** MENTION OBLIGATOIRE ***');
+  encoder.textLine('A FAIRE VALOIR SUR UN PROCHAIN ACHAT');
+  encoder.bold(false);
+  encoder.textLine('Presentation obligatoire de ce ticket');
+  encoder.textLine('original en caisse lors du reglement.');
+  encoder.textLine('Non remboursable en especes sauf accord.');
+  encoder.textLine('Valable dans tous nos points de vente.');
+  encoder.divider('-', lineWidth);
+
+  // 6. Code-barres pour Douchette / Scanner Optique Caisse
+  try {
+    encoder.barcode(avoir.numero, 'CODE39', 52);
+  } catch {
+    encoder.textLine(`* ${avoir.numero} *`);
+  }
+  encoder.lineFeed(1);
+  encoder.textLine('Conservez precieusement ce ticket');
+  encoder.textLine('BizPilot BF - Service Caisse');
+
+  // 7. Commande de coupe papier automatique
+  if (options.autoCut !== false) {
+    encoder.cut();
+  }
+
+  return encoder.encode();
+}
+
+/**
+ * Dedicated function to print an Avoir ticket via the existing ESC/POS printing service.
+ * Supports Bluetooth ESC/POS (POS-80/POS-58) thermal printers.
+ * Returns detailed status, device name, and explicit error message if failed.
+ */
+export async function printAvoirEscPos(
+  avoir: Avoir,
+  business: Business,
+  options: AvoirEscPosPrintOptions = {}
+): Promise<{ success: boolean; deviceName?: string; error?: string }> {
+  try {
+    // 1. Build the complete ESC/POS stream with number, amount, mandatory notice and barcode
+    const rawData = buildAvoirEscPosBuffer(avoir, business, options);
+
+    // 2. Ensure connection to POS Bluetooth printer
+    const connectInfo = await blePrinter.connect(false);
+
+    // 3. Transmit chunked binary data
+    await blePrinter.printData(rawData);
+
+    return {
+      success: true,
+      deviceName: connectInfo.name || 'Imprimante ESC/POS Thermique',
+    };
+  } catch (err: any) {
+    console.error('Erreur impression ESC/POS ticket d\'avoir:', err);
+    return {
+      success: false,
+      error: err.message || 'Erreur lors de la transmission à l\'imprimante thermique ESC/POS.',
+    };
+  }
+}
+
+/**
+ * Direct ESC/POS Bluetooth thermal printing for Avoirs (Store Credit / Debt Recognition).
+ * Wrapper around printAvoirEscPos for backwards compatibility.
+ */
+export async function printAvoirViaBluetooth(avoir: Avoir, business: Business): Promise<boolean> {
+  const result = await printAvoirEscPos(avoir, business);
+  if (!result.success && result.error) {
+    throw new Error(result.error);
+  }
+  return result.success;
+}
+

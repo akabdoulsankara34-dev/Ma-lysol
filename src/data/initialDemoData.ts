@@ -1,4 +1,4 @@
-import { Business, AppUser, Product, Customer, Expense, Sale, StockMovement, CashSession, Quotation } from '../types';
+import { Business, AppUser, Product, Customer, Expense, Sale, StockMovement, CashSession, Quotation, Avoir } from '../types';
 
 export const initialBusinesses: Business[] = [
   {
@@ -812,3 +812,61 @@ export const initialQuotations: Quotation[] = [
     createdAt: '2026-08-15T10:00:00Z',
   }
 ];
+
+export const initialAvoirs: Avoir[] = [
+  {
+    id: 'av_mae_001',
+    numero: 'AV-0001',
+    commerceId: 'biz_maelys',
+    businessId: 'biz_maelys',
+    venteId: 'sale_mae_001',
+    venteReceiptNumber: 'TCK-MAE-0001',
+    clientNom: 'Mme Ouedraogo Aminata',
+    clientTel: '+226 70 88 99 00',
+    montant: 1500,
+    dateCreation: '2026-08-20T14:32:00Z',
+    statut: 'actif',
+    caissierId: 'usr_maelys_fatima',
+    caissierNom: 'Fatima Compaoré',
+    notes: 'Reliquat monnaie billet 10 000 FCFA non disponible'
+  },
+  {
+    id: 'av_mae_002',
+    numero: 'AV-0002',
+    commerceId: 'biz_maelys',
+    businessId: 'biz_maelys',
+    venteId: 'sale_mae_002',
+    venteReceiptNumber: 'TCK-MAE-0002',
+    clientNom: 'M. Compaoré Moussa',
+    clientTel: '+226 78 44 55 66',
+    montant: 2000,
+    dateCreation: '2026-08-21T16:10:00Z',
+    statut: 'utilise',
+    venteUtilisationId: 'sale_mae_004',
+    venteUtilisationReceiptNumber: 'TCK-MAE-0004',
+    dateUtilisation: '2026-08-22T11:20:00Z',
+    caissierId: 'usr_maelys_eric',
+    caissierNom: 'sankara eric',
+    notes: 'Monnaie pièce 500F manquante convertie en avoir'
+  },
+  {
+    id: 'av_mae_003',
+    numero: 'AV-0003',
+    commerceId: 'biz_maelys',
+    businessId: 'biz_maelys',
+    venteId: 'sale_mae_003',
+    venteReceiptNumber: 'TCK-MAE-0003',
+    clientNom: 'Client Comptoir',
+    clientTel: '',
+    montant: 1000,
+    dateCreation: '2026-08-22T09:45:00Z',
+    statut: 'rembourse',
+    dateRemboursement: '2026-08-22T18:00:00Z',
+    rembourseParId: 'usr_maelys_eric',
+    rembourseParNom: 'sankara eric',
+    caissierId: 'usr_maelys_fatima',
+    caissierNom: 'Fatima Compaoré',
+    notes: 'Remboursement en espèces effectué lors de la livraison de monnaie'
+  }
+];
+

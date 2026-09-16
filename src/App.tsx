@@ -20,6 +20,7 @@ import { ExpiryManagementView } from './components/expiry/ExpiryManagementView';
 import { ProformaInvoicesView } from './components/proformas/ProformaInvoicesView';
 import { BarcodeLabelsView } from './components/labels/BarcodeLabelsView';
 import { InvoicesView } from './components/invoices/InvoicesView';
+import { AvoirsView } from './components/avoirs/AvoirsView';
 import { CustomerDisplayView } from './components/pos/CustomerDisplayView';
 
 const MainLayout: React.FC = () => {
@@ -66,6 +67,7 @@ const MainLayout: React.FC = () => {
           {activeTab === 'expiry' && (isStockManager ? <ExpiryManagementView /> : <PosView />)}
           {activeTab === 'proformas' && <ProformaInvoicesView />}
           {activeTab === 'invoices' && <InvoicesView />}
+          {activeTab === 'avoirs' && <AvoirsView />}
           {activeTab === 'labels' && (isStockManager ? <BarcodeLabelsView /> : <PosView />)}
           {activeTab === 'customers' && <CustomersView />}
           {activeTab === 'expenses' && <ExpensesView />}

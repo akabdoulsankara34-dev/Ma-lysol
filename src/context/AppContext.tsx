@@ -22,7 +22,8 @@ import {
   QuotationItem,
   Invoice,
   InvoiceItem,
-  QueuedMutation
+  QueuedMutation,
+  Avoir
 } from '../types';
 import { 
   initialBusinesses,
@@ -34,7 +35,8 @@ import {
   initialSales, 
   initialStockMovements,
   initialCashSessions,
-  initialQuotations
+  initialQuotations,
+  initialAvoirs
 } from '../data/initialDemoData';
 import { db, sanitizeForFirestore, ensureFirebaseAuth } from '../lib/firebase';
 import { 
@@ -150,11 +152,33 @@ interface AppContextType {
     customerId?: string,
     customerName?: string,
     overallDiscount?: number,
-    splitDetails?: { cash?: number; orangeMoney?: number; moovMoney?: number; waveCoris?: number; credit?: number; },
+    splitDetails?: { cash?: number; orangeMoney?: number; moovMoney?: number; waveCoris?: number; credit?: number; avoir?: number; },
     notes?: string,
-    loyaltyPointsToRedeem?: number
+    loyaltyPointsToRedeem?: number,
+    avoirDetails?: {
+      usedAvoirId?: string;
+      usedAvoirNumero?: string;
+      usedAvoirAmount?: number;
+      generatedAvoirAmount?: number;
+      generatedClientNom?: string;
+      generatedClientTel?: string;
+    }
   ) => Promise<Sale>;
   cancelSale: (saleId: string, reason: string) => Promise<void>;
+
+  // Avoirs (Reconnaissance de dette / Reliquat de monnaie)
+  avoirs: Avoir[];
+  createAvoir: (params: {
+    venteId: string;
+    venteReceiptNumber?: string;
+    montant: number;
+    clientNom?: string;
+    clientTel?: string;
+    notes?: string;
+  }) => Promise<Avoir>;
+  useAvoirOnSale: (avoirIdOrNumero: string, venteId: string, venteReceiptNumber?: string) => Promise<Avoir>;
+  refundAvoirInCash: (avoirIdOrNumero: string, notes?: string) => Promise<Avoir>;
+  getAvoirByNumero: (numero: string) => Avoir | undefined;
 
   // Customers, Debts & Loyalty
   customers: Customer[];
@@ -297,6 +321,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
   const [invoices, setInvoices] = useState<Invoice[]>(
     initialCached?.invoices || []
+  );
+  const [avoirs, setAvoirs] = useState<Avoir[]>(
+    initialCached?.avoirs || initialAvoirs
   );
 
   // Offline Mutations Outbox Queue
@@ -685,7 +712,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       stockMovements,
       cashSessions,
       quotations,
-      invoices
+      invoices,
+      avoirs
     };
     try {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(dataToSave));
@@ -703,10 +731,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     customers, 
     customerPayments, 
     expenses, 
-    stockMovements,
-    cashSessions,
-    quotations,
-    invoices
+    stockMovements, 
+    cashSessions, 
+    quotations, 
+    invoices, 
+    avoirs
   ]);
 
   // Persist offline queue to localStorage
@@ -871,6 +900,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let unsubscribeCashSessions: (() => void) | undefined;
     let unsubscribeQuotations: (() => void) | undefined;
     let unsubscribeInvoices: (() => void) | undefined;
+    let unsubscribeAvoirs: (() => void) | undefined;
 
     const setupFirestoreSync = async () => {
       try {
@@ -915,6 +945,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             });
             initialQuotations.forEach(q => {
               batch.set(doc(db, 'quotations', q.id), sanitizeForFirestore(q));
+            });
+            initialAvoirs.forEach(a => {
+              batch.set(doc(db, 'avoirs', a.id), sanitizeForFirestore(a));
             });
 
             await batch.commit();
@@ -1059,6 +1092,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         }, (err) => handleFirestoreError(err, OperationType.LIST, 'invoices'));
 
+        // 12. Real-Time Avoirs Listener
+        const avCol = collection(db, 'avoirs');
+        unsubscribeAvoirs = onSnapshot(avCol, (snapshot) => {
+          if (!snapshot.empty) {
+            const list: Avoir[] = [];
+            snapshot.forEach(docSnap => {
+              list.push({ id: docSnap.id, ...docSnap.data() } as Avoir);
+            });
+            setAvoirs(list.sort((a, b) => new Date(b.dateCreation).getTime() - new Date(a.dateCreation).getTime()));
+          }
+        }, (err) => handleFirestoreError(err, OperationType.LIST, 'avoirs'));
+
         setLastSyncedAt(new Date());
         setIsSyncing(false);
       } catch (e) {
@@ -1081,6 +1126,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubscribeCashSessions?.();
       unsubscribeQuotations?.();
       unsubscribeInvoices?.();
+      unsubscribeAvoirs?.();
     };
   }, [isOnline]);
 
@@ -1104,7 +1150,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         usersSnap,
         cashSnap,
         quotSnap,
-        invSnap
+        invSnap,
+        avSnap
       ] = await Promise.all([
         getDocs(collection(db, 'businesses')),
         getDocs(collection(db, 'products')),
@@ -1117,6 +1164,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         getDocs(collection(db, 'cash_sessions')),
         getDocs(collection(db, 'quotations')),
         getDocs(collection(db, 'invoices')),
+        getDocs(collection(db, 'avoirs')),
       ]);
 
       if (!bizSnap.empty) {
@@ -1187,6 +1235,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setInvoices(invList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
       }
 
+      if (!avSnap.empty) {
+        const avList: Avoir[] = [];
+        avSnap.forEach(d => avList.push({ id: d.id, ...d.data() } as Avoir));
+        setAvoirs(avList.sort((a, b) => new Date(b.dateCreation).getTime() - new Date(a.dateCreation).getTime()));
+      }
+
       setLastSyncedAt(new Date());
     } catch (err) {
       console.warn('Manual cloud sync notice:', err);
@@ -1244,6 +1298,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const scopedQuotations = useMemo(() => 
     quotations.filter(q => q.businessId === business.id),
     [quotations, business.id]
+  );
+
+  const scopedAvoirs = useMemo(() => 
+    avoirs.filter(a => a.businessId === business.id || a.commerceId === business.id),
+    [avoirs, business.id]
   );
 
   // Generate automated alerts for stock, expiry, and overdue debts
@@ -1390,9 +1449,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     customerId?: string,
     customerName?: string,
     overallDiscount = 0,
-    splitDetails?: { cash?: number; orangeMoney?: number; moovMoney?: number; waveCoris?: number; credit?: number; },
+    splitDetails?: { cash?: number; orangeMoney?: number; moovMoney?: number; waveCoris?: number; credit?: number; avoir?: number; },
     notes?: string,
-    loyaltyPointsToRedeem = 0
+    loyaltyPointsToRedeem = 0,
+    avoirDetails?: {
+      usedAvoirId?: string;
+      usedAvoirNumero?: string;
+      usedAvoirAmount?: number;
+      generatedAvoirAmount?: number;
+      generatedClientNom?: string;
+      generatedClientTel?: string;
+    }
   ): Promise<Sale> => {
     if (cart.length === 0) {
       throw new Error('Le panier est vide');
@@ -1427,6 +1494,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const saleId = `sale_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
     const nowIso = new Date().toISOString();
 
+    // Check if an avoir was used for payment
+    let usedAvoirObj: Avoir | undefined;
+    if (avoirDetails?.usedAvoirId || avoirDetails?.usedAvoirNumero) {
+      usedAvoirObj = avoirs.find(a => 
+        (a.id === avoirDetails.usedAvoirId) || 
+        (avoirDetails.usedAvoirNumero && a.numero.toUpperCase() === avoirDetails.usedAvoirNumero.trim().toUpperCase())
+      );
+    }
+
+    // Check if an avoir needs to be generated (monnaie rendue sous forme d'avoir)
+    let generatedAvoir: Avoir | undefined;
+    if (avoirDetails?.generatedAvoirAmount && avoirDetails.generatedAvoirAmount > 0) {
+      let maxSeq = 0;
+      avoirs.forEach(a => {
+        const match = a.numero?.match(/AV-(\d+)/i);
+        if (match) {
+          const val = parseInt(match[1], 10);
+          if (!isNaN(val) && val > maxSeq) maxSeq = val;
+        }
+      });
+      const nextSeq = maxSeq + 1;
+      const genNum = `AV-${String(nextSeq).padStart(4, '0')}`;
+      const genId = `av_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+
+      generatedAvoir = {
+        id: genId,
+        numero: genNum,
+        commerceId: business.id,
+        businessId: business.id,
+        venteId: saleId,
+        venteReceiptNumber: receiptNumber,
+        clientNom: avoirDetails.generatedClientNom || customerName || (customerId ? customers.find(c => c.id === customerId)?.name : '') || undefined,
+        clientTel: avoirDetails.generatedClientTel || undefined,
+        montant: Math.round(avoirDetails.generatedAvoirAmount),
+        dateCreation: nowIso,
+        statut: 'actif',
+        caissierId: currentUser.id,
+        caissierNom: currentUser.name,
+      };
+    }
+
     const newSale: Sale = {
       id: saleId,
       businessId: business.id,
@@ -1448,10 +1556,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       loyaltyPointsEarned: pointsEarned,
       notes,
       createdAt: nowIso,
+      avoirUsedId: usedAvoirObj ? usedAvoirObj.id : avoirDetails?.usedAvoirId,
+      avoirUsedNumero: usedAvoirObj ? usedAvoirObj.numero : avoirDetails?.usedAvoirNumero,
+      avoirUsedAmount: avoirDetails?.usedAvoirAmount,
+      avoirGeneratedId: generatedAvoir ? generatedAvoir.id : undefined,
+      avoirGeneratedNumero: generatedAvoir ? generatedAvoir.numero : undefined,
+      avoirGeneratedAmount: generatedAvoir ? generatedAvoir.montant : undefined,
     };
 
     // Update local sales optimistically
     setSales(prev => [newSale, ...prev]);
+
+    // Update used avoir optimistically
+    if (usedAvoirObj) {
+      const updatedUsed: Avoir = {
+        ...usedAvoirObj,
+        statut: 'utilise',
+        venteUtilisationId: saleId,
+        venteUtilisationReceiptNumber: receiptNumber,
+        dateUtilisation: nowIso,
+      };
+      setAvoirs(prev => prev.map(a => a.id === usedAvoirObj!.id ? updatedUsed : a));
+    }
+
+    // Insert newly generated avoir optimistically
+    if (generatedAvoir) {
+      setAvoirs(prev => [generatedAvoir!, ...prev]);
+    }
 
     // 1. Decrement products stock & record stock movements
     const updatedProducts = [...products];
@@ -1567,6 +1698,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       for (const mov of newMovements) {
         syncTasks.push(
           syncMutation('stock_movements', mov.id, 'set', mov, `Mouvement stock ${mov.productName}`)
+        );
+      }
+
+      if (usedAvoirObj) {
+        syncTasks.push(
+          syncMutation('avoirs', usedAvoirObj.id, 'update', {
+            statut: 'utilise',
+            venteUtilisationId: saleId,
+            venteUtilisationReceiptNumber: receiptNumber,
+            dateUtilisation: nowIso,
+          }, `Utilisation Avoir ${usedAvoirObj.numero}`)
+        );
+      }
+
+      if (generatedAvoir) {
+        syncTasks.push(
+          syncMutation('avoirs', generatedAvoir.id, 'set', generatedAvoir, `Génération Avoir ${generatedAvoir.numero}`)
         );
       }
 
@@ -1702,6 +1850,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       syncMutation('cash_sessions', activeCashSession.id, 'update', updatedSession, `Annulation Ticket #${targetSale.receiptNumber}`);
     }
 
+    // 4b. Revert Avoirs if applicable
+    let restoredUsedAvoir: Avoir | undefined;
+    if (targetSale.avoirUsedId) {
+      const uAvoir = avoirs.find(a => a.id === targetSale.avoirUsedId);
+      if (uAvoir) {
+        restoredUsedAvoir = {
+          ...uAvoir,
+          statut: 'actif',
+          venteUtilisationId: undefined,
+          venteUtilisationReceiptNumber: undefined,
+          dateUtilisation: undefined,
+        };
+        setAvoirs(prev => prev.map(a => a.id === uAvoir.id ? restoredUsedAvoir! : a));
+      }
+    }
+
+    let cancelledGenAvoir: Avoir | undefined;
+    if (targetSale.avoirGeneratedId) {
+      const gAvoir = avoirs.find(a => a.id === targetSale.avoirGeneratedId);
+      if (gAvoir && gAvoir.statut === 'actif') {
+        cancelledGenAvoir = {
+          ...gAvoir,
+          statut: 'rembourse',
+          notes: `${gAvoir.notes ? gAvoir.notes + ' | ' : ''}Annulé suite à l'annulation de la vente #${targetSale.receiptNumber}`,
+        };
+        setAvoirs(prev => prev.map(a => a.id === gAvoir.id ? cancelledGenAvoir! : a));
+      }
+    }
+
     // 5. Asynchronously persist changes to Firestore
     (async () => {
       const syncTasks: Promise<any>[] = [
@@ -1713,6 +1890,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           cancellationReason: trimmedReason,
         }, `Annulation Vente Ticket #${targetSale.receiptNumber}`)
       ];
+
+      if (restoredUsedAvoir) {
+        syncTasks.push(
+          syncMutation('avoirs', restoredUsedAvoir.id, 'update', {
+            statut: 'actif',
+            venteUtilisationId: null,
+            venteUtilisationReceiptNumber: null,
+            dateUtilisation: null,
+          }, `Rétablissement Avoir ${restoredUsedAvoir.numero}`)
+        );
+      }
+
+      if (cancelledGenAvoir) {
+        syncTasks.push(
+          syncMutation('avoirs', cancelledGenAvoir.id, 'update', {
+            statut: 'rembourse',
+            notes: cancelledGenAvoir.notes,
+          }, `Annulation Avoir généré ${cancelledGenAvoir.numero}`)
+        );
+      }
 
       for (const p of updatedProducts) {
         const itemInSale = targetSale.items.find(si => si.productId === p.id);
@@ -2053,6 +2250,163 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await syncMutation('cash_sessions', activeCashSession.id, 'update', updatedSession, `Mouvement caisse ${type}`);
   };
 
+  // Avoirs Module Methods
+  const getAvoirByNumero = useCallback((rawNumero: string): Avoir | undefined => {
+    if (!rawNumero) return undefined;
+    const clean = rawNumero.trim().toUpperCase();
+    return avoirs.find(a => 
+      (a.businessId === business.id || a.commerceId === business.id) &&
+      a.numero.toUpperCase() === clean
+    );
+  }, [avoirs, business.id]);
+
+  const createAvoir = useCallback(async (params: {
+    venteId: string;
+    venteReceiptNumber?: string;
+    montant: number;
+    clientNom?: string;
+    clientTel?: string;
+    notes?: string;
+  }): Promise<Avoir> => {
+    let maxSeq = 0;
+    avoirs.forEach(a => {
+      const match = a.numero?.match(/AV-(\d+)/i);
+      if (match) {
+        const val = parseInt(match[1], 10);
+        if (!isNaN(val) && val > maxSeq) maxSeq = val;
+      }
+    });
+    const nextSeq = maxSeq + 1;
+    const numero = `AV-${String(nextSeq).padStart(4, '0')}`;
+    const nowIso = new Date().toISOString();
+    const id = `av_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+
+    const newAvoir: Avoir = {
+      id,
+      numero,
+      commerceId: business.id,
+      businessId: business.id,
+      venteId: params.venteId,
+      venteReceiptNumber: params.venteReceiptNumber,
+      clientNom: params.clientNom?.trim() || undefined,
+      clientTel: params.clientTel?.trim() || undefined,
+      montant: Math.round(params.montant),
+      dateCreation: nowIso,
+      statut: 'actif',
+      caissierId: currentUser.id,
+      caissierNom: currentUser.name,
+      notes: params.notes?.trim() || undefined
+    };
+
+    setAvoirs(prev => [newAvoir, ...prev]);
+
+    await syncMutation(
+      'avoirs',
+      newAvoir.id,
+      'set',
+      newAvoir,
+      `Création Avoir ${newAvoir.numero} (${newAvoir.montant} FCFA)`
+    );
+
+    return newAvoir;
+  }, [avoirs, business.id, currentUser.id, currentUser.name, syncMutation]);
+
+  const useAvoirOnSale = useCallback(async (
+    avoirIdOrNumero: string,
+    venteId: string,
+    venteReceiptNumber?: string
+  ): Promise<Avoir> => {
+    const clean = avoirIdOrNumero.trim().toUpperCase();
+    const target = avoirs.find(a => a.id === avoirIdOrNumero || a.numero.toUpperCase() === clean);
+    if (!target) {
+      throw new Error(`Avoir introuvable (${avoirIdOrNumero}).`);
+    }
+    if (target.statut !== 'actif') {
+      throw new Error(`Cet avoir (${target.numero}) n'est plus actif (statut: ${target.statut}).`);
+    }
+
+    const nowIso = new Date().toISOString();
+    const updated: Avoir = {
+      ...target,
+      statut: 'utilise',
+      venteUtilisationId: venteId,
+      venteUtilisationReceiptNumber: venteReceiptNumber,
+      dateUtilisation: nowIso
+    };
+
+    setAvoirs(prev => prev.map(a => a.id === target.id ? updated : a));
+
+    await syncMutation(
+      'avoirs',
+      target.id,
+      'update',
+      {
+        statut: 'utilise',
+        venteUtilisationId: venteId,
+        venteUtilisationReceiptNumber: venteReceiptNumber,
+        dateUtilisation: nowIso
+      },
+      `Utilisation Avoir ${target.numero}`
+    );
+
+    return updated;
+  }, [avoirs, syncMutation]);
+
+  const refundAvoirInCash = useCallback(async (
+    avoirIdOrNumero: string,
+    notes?: string
+  ): Promise<Avoir> => {
+    const clean = avoirIdOrNumero.trim().toUpperCase();
+    const target = avoirs.find(a => a.id === avoirIdOrNumero || a.numero.toUpperCase() === clean);
+    if (!target) {
+      throw new Error(`Avoir introuvable (${avoirIdOrNumero}).`);
+    }
+    if (target.statut !== 'actif') {
+      throw new Error(`Cet avoir (${target.numero}) ne peut pas être remboursé car son statut est "${target.statut}".`);
+    }
+
+    const nowIso = new Date().toISOString();
+    const updated: Avoir = {
+      ...target,
+      statut: 'rembourse',
+      dateRemboursement: nowIso,
+      rembourseParId: currentUser.id,
+      rembourseParNom: currentUser.name,
+      notes: notes ? `${target.notes ? target.notes + ' | ' : ''}${notes}` : target.notes
+    };
+
+    setAvoirs(prev => prev.map(a => a.id === target.id ? updated : a));
+
+    await syncMutation(
+      'avoirs',
+      target.id,
+      'update',
+      {
+        statut: 'rembourse',
+        dateRemboursement: nowIso,
+        rembourseParId: currentUser.id,
+        rembourseParNom: currentUser.name,
+        notes: updated.notes
+      },
+      `Remboursement Avoir ${target.numero}`
+    );
+
+    // Auto cash out if session is open
+    if (activeCashSession && activeCashSession.status === 'open') {
+      try {
+        await recordCashMovement(
+          'cash_out',
+          target.montant,
+          `Remboursement Avoir ${target.numero} (${target.clientNom || 'Client'})`
+        );
+      } catch (err) {
+        console.warn('Auto cash out on avoir refund:', err);
+      }
+    }
+
+    return updated;
+  }, [avoirs, currentUser.id, currentUser.name, activeCashSession, recordCashMovement, syncMutation]);
+
   // Quotation / Proforma Operations
   const addQuotation = async (
     quotationData: Omit<Quotation, 'id' | 'businessId' | 'quotationNumber' | 'createdBy' | 'createdByName' | 'createdAt'>
@@ -2203,6 +2557,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setStockMovements(initialStockMovements);
     setCashSessions(initialCashSessions);
     setQuotations(initialQuotations);
+    setAvoirs(initialAvoirs);
     setCustomerPayments([]);
     setCart([]);
     localStorage.removeItem(LOCAL_STORAGE_KEY);
@@ -2218,6 +2573,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       initialStockMovements.forEach(sm => batch.set(doc(db, 'stock_movements', sm.id), sanitizeForFirestore(sm)));
       initialCashSessions.forEach(cs => batch.set(doc(db, 'cash_sessions', cs.id), sanitizeForFirestore(cs)));
       initialQuotations.forEach(q => batch.set(doc(db, 'quotations', q.id), sanitizeForFirestore(q)));
+      initialAvoirs.forEach(a => batch.set(doc(db, 'avoirs', a.id), sanitizeForFirestore(a)));
       await batch.commit();
     } catch (e) {
       console.warn('Reset demo batch error:', e);
@@ -2289,6 +2645,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return diff <= 30;
     }).length;
 
+    const totalAvoirsActifs = scopedAvoirs
+      .filter(a => a.statut === 'actif')
+      .reduce((sum, a) => sum + (a.montant || 0), 0);
+    const countAvoirsActifs = scopedAvoirs.filter(a => a.statut === 'actif').length;
+
     return {
       todaySales,
       todaySalesCount,
@@ -2305,8 +2666,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       cancelledSalesCount,
       cancelledSalesAmount,
       activeCashSession,
+      totalAvoirsActifs,
+      countAvoirsActifs,
     };
-  }, [scopedSales, scopedExpenses, scopedCustomers, scopedProducts, activeCashSession]);
+  }, [scopedSales, scopedExpenses, scopedCustomers, scopedProducts, activeCashSession, scopedAvoirs]);
 
   return (
     <AppContext.Provider
@@ -2354,6 +2717,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         invoices: invoices.filter(i => i.businessId === business.id),
         addInvoice,
         updateInvoiceStatus,
+        avoirs: scopedAvoirs,
+        createAvoir,
+        useAvoirOnSale,
+        refundAvoirInCash,
+        getAvoirByNumero,
         applyExpiryDiscount,
         declareDamagedLoss,
         addLoyaltyPoints,

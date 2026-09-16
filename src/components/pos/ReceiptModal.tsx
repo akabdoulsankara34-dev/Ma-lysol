@@ -19,12 +19,21 @@ import {
   RotateCcw,
   ExternalLink,
   FileText,
-  Usb
+  Usb,
+  Ticket
 } from 'lucide-react';
 import { blePrinter, EscPosEncoder } from '../../lib/blePrinter';
 import { cashDrawerService } from '../../lib/cashDrawerService';
 import { CancelSaleModal } from './CancelSaleModal';
-import { printReceipt, downloadReceipt, openReceiptInNewTab, generateReceiptHtml } from '../../lib/receiptPrinter';
+import { 
+  printReceipt, 
+  downloadReceipt, 
+  openReceiptInNewTab, 
+  generateReceiptHtml,
+  printAvoirEscPos,
+  printAvoir
+} from '../../lib/receiptPrinter';
+import { Avoir } from '../../types';
 
 interface ReceiptModalProps {
   sale: Sale;
@@ -48,6 +57,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
   const [usbConnected, setUsbConnected] = useState(
     cashDrawerService.isUsbConnected() || cashDrawerService.isSerialConnected()
   );
+  const [isAvoirPrinting, setIsAvoirPrinting] = useState(false);
 
   const hasAutoPrintedRef = React.useRef(false);
 
@@ -315,6 +325,49 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
     window.open(url, '_blank');
   };
 
+  const handlePrintGeneratedAvoir = async () => {
+    if (!sale.avoirGeneratedNumero && !sale.avoirGeneratedAmount) return;
+    setIsAvoirPrinting(true);
+
+    const generatedAvoirData: Avoir = {
+      id: sale.avoirGeneratedId || `av_${sale.id}`,
+      numero: sale.avoirGeneratedNumero || 'AV-0001',
+      commerceId: business.id,
+      businessId: business.id,
+      venteId: sale.id,
+      venteReceiptNumber: sale.receiptNumber,
+      clientNom: sale.customerName && sale.customerName !== 'Client Comptoir' ? sale.customerName : undefined,
+      montant: sale.avoirGeneratedAmount || 0,
+      dateCreation: sale.createdAt,
+      statut: 'actif',
+      caissierId: sale.sellerId,
+      caissierNom: sale.sellerName,
+      notes: `Avoir généré lors de la vente #${sale.receiptNumber}`,
+    };
+
+    try {
+      if (blePrinter.isConnected()) {
+        const res = await printAvoirEscPos(generatedAvoirData, business);
+        if (res.success) {
+          setBleStatus({
+            type: 'success',
+            message: `Ticket d'Avoir N° ${generatedAvoirData.numero} imprimé sur ${res.deviceName || 'l\'imprimante POS-80'} !`,
+          });
+          setTimeout(() => setBleStatus(null), 4000);
+          return;
+        }
+      }
+      await printAvoir(generatedAvoirData, business);
+    } catch (err: any) {
+      setBleStatus({
+        type: 'error',
+        message: err.message || "Erreur lors de l'impression du ticket d'avoir",
+      });
+    } finally {
+      setIsAvoirPrinting(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
       <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 border border-slate-200">
@@ -434,6 +487,22 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
                 <span className="font-semibold">Mode de Règlement :</span>
                 <span className="font-black text-black uppercase">{getPaymentLabel(sale.paymentMethod)}</span>
               </div>
+
+              {/* Mention Avoir généré si applicable */}
+              {sale.avoirGeneratedNumero && (
+                <div className="mt-2 pt-1.5 border-t border-dashed border-slate-400 text-black">
+                  <div className="flex justify-between font-bold text-[11px]">
+                    <span>Bon d'Avoir émis :</span>
+                    <span className="font-black">{sale.avoirGeneratedNumero}</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-[11px]">
+                    <span>Montant Avoir :</span>
+                    <span className="font-black">
+                      {sale.avoirGeneratedAmount?.toLocaleString('fr-FR')} {business.currency}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Footer */}
@@ -443,6 +512,33 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
             </div>
           </div>
         </div>
+
+        {/* Banner if Avoir was generated during this checkout */}
+        {sale.avoirGeneratedNumero && (
+          <div className="px-4 py-2.5 bg-emerald-50 border-b border-emerald-200 flex items-center justify-between gap-2">
+            <div className="flex items-center space-x-2 text-xs">
+              <Ticket className="h-4 w-4 text-emerald-700 shrink-0" />
+              <div>
+                <span className="font-extrabold text-emerald-950 block text-[11.5px]">
+                  Avoir Émis : {sale.avoirGeneratedNumero}
+                </span>
+                <span className="text-[10.5px] font-bold text-emerald-800">
+                  {sale.avoirGeneratedAmount?.toLocaleString('fr-FR')} {business.currency} (Reliquat / Monnaie)
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={isAvoirPrinting}
+              onClick={handlePrintGeneratedAvoir}
+              className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer disabled:opacity-50 shrink-0"
+              title="Imprimer le ticket d'avoir thermique dédié"
+            >
+              <Printer className={`h-3.5 w-3.5 ${isAvoirPrinting ? 'animate-spin' : ''}`} />
+              <span>{isAvoirPrinting ? 'Impression...' : "Imprimer l'Avoir"}</span>
+            </button>
+          </div>
+        )}
 
         {/* BLE Status Alert */}
         {bleStatus && (
