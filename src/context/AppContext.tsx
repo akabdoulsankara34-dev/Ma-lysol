@@ -38,6 +38,7 @@ import {
   initialQuotations,
   initialAvoirs
 } from '../data/initialDemoData';
+import { soundEffects } from '../lib/sound';
 import { db, sanitizeForFirestore, ensureFirebaseAuth } from '../lib/firebase';
 import { 
   collection, 
@@ -100,8 +101,11 @@ interface AppContextType {
   allBusinesses: Business[];
   business: Business;
   isBusinessAuthenticated: boolean;
+  isUserAuthenticated: boolean;
   authenticateBusiness: (accessCode: string) => Promise<{ success: boolean; message?: string; business?: Business }>;
   logoutBusiness: () => void;
+  lockUserSession: () => void;
+  loginUser: (userId: string, pinOrPassword: string) => { success: boolean; message?: string; user?: AppUser };
   createBusiness: (businessData: Omit<Business, 'id' | 'createdAt'>, ownerPin?: string) => Promise<Business>;
   updateBusiness: (id: string, updates: Partial<Business>) => Promise<void>;
   deleteBusiness: (id: string) => Promise<void>;
@@ -286,6 +290,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     initialCached?.isBusinessAuthenticated ?? true
   );
 
+  const [isUserAuthenticated, setIsUserAuthenticated] = useState<boolean>(
+    initialCached?.isUserAuthenticated ?? false
+  );
+
   // Global Multi-tenant Dataset
   const [allUsers, setAllUsers] = useState<AppUser[]>(
     initialCached?.allUsers || initialUsers
@@ -402,6 +410,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Set active store
     setBusiness(found);
     setIsBusinessAuthenticated(true);
+    // User session remains locked until collaborator enters their personal password
+    setIsUserAuthenticated(false);
 
     // Switch to first owner/manager of this business
     let storeUsers = allUsers.filter(u => u.businessId === found.id);
@@ -457,8 +467,64 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Logout current business
   const logoutBusiness = useCallback(() => {
     setIsBusinessAuthenticated(false);
+    setIsUserAuthenticated(false);
     setCart([]);
   }, []);
+
+  // Lock user session (requires password to unlock)
+  const lockUserSession = useCallback(() => {
+    setIsUserAuthenticated(false);
+    setUserToSwitchWithPin(null);
+  }, []);
+
+  // Login collaborator with password / PIN
+  const loginUser = useCallback((userId: string, pinOrPassword: string) => {
+    const user = allUsers.find(u => u.id === userId && u.businessId === business.id);
+    if (!user) {
+      return { success: false, message: "Utilisateur non trouvé dans cette boutique." };
+    }
+    if (!user.active) {
+      return { success: false, message: `L'accès de ${user.name} a été suspendu par le propriétaire.` };
+    }
+
+    const inputClean = pinOrPassword.trim();
+    const expectedPin = (user.pin || '').trim();
+    const isMatch = (inputClean !== '' && inputClean === expectedPin) ||
+      (expectedPin === '' && (inputClean === '0000' || inputClean === '1234'));
+
+    if (isMatch) {
+      setCurrentUser(user);
+      setIsUserAuthenticated(true);
+      setUserToSwitchWithPin(null);
+
+      // Route according to role
+      if (user.role === 'cashier') {
+        setActiveTabRaw('pos');
+      } else if (user.role === 'stock_manager') {
+        setActiveTabRaw('stock');
+      } else {
+        setActiveTabRaw('dashboard');
+      }
+
+      try {
+        soundEffects.playSaleChime();
+      } catch {
+        // audio policy
+      }
+
+      return { success: true, user };
+    } else {
+      try {
+        soundEffects.playBarcodeError();
+      } catch {
+        // audio policy
+      }
+      return { 
+        success: false, 
+        message: "Mot de passe incorrect. Saisissez le mot de passe fourni par le propriétaire." 
+      };
+    }
+  }, [allUsers, business.id, setActiveTabRaw]);
 
   // Switch Business
   const switchBusiness = useCallback((businessId: string) => {
@@ -466,6 +532,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (target) {
       setBusiness(target);
       setIsBusinessAuthenticated(true);
+      setIsUserAuthenticated(false);
       const storeUsers = allUsers.filter(u => u.businessId === target.id);
       if (storeUsers.length > 0) {
         setCurrentUser(storeUsers.find(u => u.role === 'owner') || storeUsers[0]);
@@ -577,17 +644,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const requestUserSwitch = (userId: string) => {
     const found = allUsers.find(u => u.id === userId);
     if (found && found.active) {
-      if (!found.pin || found.pin === '0000') {
-        setCurrentUser(found);
-      } else {
-        setUserToSwitchWithPin(found);
-      }
+      setUserToSwitchWithPin(found);
     }
   };
 
   const verifyUserPin = (userId: string, pin: string): boolean => {
     const found = allUsers.find(u => u.id === userId);
-    return found ? (found.pin === pin || (!found.pin && pin === '0000')) : false;
+    if (!found) return false;
+    const inputClean = pin.trim();
+    const expected = (found.pin || '').trim();
+    return (inputClean !== '' && inputClean === expected) || (expected === '' && (inputClean === '0000' || inputClean === '1234'));
   };
 
   // User Management by Owner
@@ -702,6 +768,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       allBusinesses,
       business,
       isBusinessAuthenticated,
+      isUserAuthenticated,
       allUsers,
       currentUser,
       products,
@@ -724,6 +791,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     allBusinesses, 
     business, 
     isBusinessAuthenticated, 
+    isUserAuthenticated,
     allUsers, 
     currentUser, 
     products, 
@@ -2677,8 +2745,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         allBusinesses,
         business,
         isBusinessAuthenticated,
+        isUserAuthenticated,
         authenticateBusiness,
         logoutBusiness,
+        lockUserSession,
+        loginUser,
         createBusiness,
         updateBusiness,
         deleteBusiness,

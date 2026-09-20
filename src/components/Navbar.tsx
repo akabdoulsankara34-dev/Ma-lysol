@@ -17,7 +17,8 @@ import {
   LogOut,
   KeyRound,
   RefreshCw,
-  Menu
+  Menu,
+  Lock
 } from 'lucide-react';
 
 export const Navbar: React.FC = () => {
@@ -28,6 +29,7 @@ export const Navbar: React.FC = () => {
     requestUserSwitch,
     switchUser, 
     logoutBusiness,
+    lockUserSession,
     isOnline, 
     isSyncing, 
     forceSyncCloudData,
@@ -248,6 +250,16 @@ export const Navbar: React.FC = () => {
               )}
             </button>
 
+            {/* Quick Session Lock Button */}
+            <button
+              type="button"
+              onClick={lockUserSession}
+              title="Verrouiller l'écran (Mot de passe requis)"
+              className="hidden sm:flex p-2 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition cursor-pointer"
+            >
+              <Lock className="h-4 w-4" />
+            </button>
+
             {/* Role & User Selector */}
             <div className="relative">
               <button
@@ -272,7 +284,7 @@ export const Navbar: React.FC = () => {
                     <p className="text-[11px] font-bold uppercase text-slate-400 tracking-wider">Changer de Profil</p>
                     <p className="text-xs text-slate-600">Sélectionnez votre compte :</p>
                   </div>
-                  <div className="p-1 space-y-1">
+                  <div className="p-1 space-y-1 max-h-60 overflow-y-auto">
                     {allUsers.map(user => (
                       <button
                         key={user.id}
@@ -300,7 +312,18 @@ export const Navbar: React.FC = () => {
                     ))}
                   </div>
 
-                  <div className="border-t border-slate-100 mt-1 pt-1 px-1">
+                  <div className="border-t border-slate-100 mt-1 pt-1 px-1 space-y-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowUserDropdown(false);
+                        lockUserSession();
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-lg text-xs text-amber-700 hover:bg-amber-50 flex items-center gap-2 font-semibold transition cursor-pointer"
+                    >
+                      <Lock className="h-3.5 w-3.5 text-amber-600" />
+                      <span>Verrouiller l'écran</span>
+                    </button>
                     <button
                       onClick={() => {
                         setShowUserDropdown(false);

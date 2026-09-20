@@ -35,12 +35,16 @@ import {
   Tv,
   Unlock,
   RotateCcw,
-  ArrowLeft
+  ArrowLeft,
+  Keyboard,
+  CheckCircle2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { cashDrawerService } from '../../lib/cashDrawerService';
 import { CashDrawerModal } from './CashDrawerModal';
 import { CancelSaleModal } from './CancelSaleModal';
+import { UsbScannerModal } from './UsbScannerModal';
+import { usbBarcodeScanner, normalizeBarcode, LastScanInfo } from '../../lib/usbBarcodeScanner';
 
 export const PosView: React.FC = () => {
   const { 
@@ -58,7 +62,8 @@ export const PosView: React.FC = () => {
     completeSale,
     cancelSale,
     setActiveTab,
-    summary
+    summary,
+    avoirs
   } = useApp();
 
   const [mobilePosTab, setMobilePosTab] = useState<'catalog' | 'cart'>('catalog');
@@ -67,6 +72,13 @@ export const PosView: React.FC = () => {
   const [overallDiscount, setOverallDiscount] = useState<number>(0);
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
+  const [showUsbScannerModal, setShowUsbScannerModal] = useState(false);
+  const [scanToast, setScanToast] = useState<{
+    type: 'success' | 'warning' | 'error' | 'avoir';
+    title: string;
+    subtitle?: string;
+    timestamp: number;
+  } | null>(null);
   const [lastCompletedSale, setLastCompletedSale] = useState<Sale | null>(null);
   const [showRecentSalesModal, setShowRecentSalesModal] = useState(false);
   const [showDisplayGuideModal, setShowDisplayGuideModal] = useState(false);
@@ -292,51 +304,96 @@ export const PosView: React.FC = () => {
   };
 
   // --------------------------------------------------------
-  // GLOBAL BARCODE SCANNER LISTENER (For Physical Scanners)
+  // USB BARCODE SCANNER LISTENER (Émulation Clavier HID)
   // --------------------------------------------------------
   useEffect(() => {
-    let barcodeBuffer = '';
-    let barcodeTimer: ReturnType<typeof setTimeout> | null = null;
+    let toastTimeout: ReturnType<typeof setTimeout> | null = null;
 
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      // Ignore if typing in an input/textarea
-      if (
-        target.tagName === 'INPUT' || 
-        target.tagName === 'TEXTAREA' || 
-        target.isContentEditable
-      ) {
+    const unsubscribe = usbBarcodeScanner.subscribe((scannedCode, scanInfo) => {
+      const codeClean = scannedCode.trim().toLowerCase();
+      const rawClean = scanInfo.raw.trim().toLowerCase();
+
+      // Look up product by SKU, barcode, or normalized code
+      const match = products.find(p => {
+        if (p.archived) return false;
+        const pSku = p.sku.toLowerCase();
+        const pBar = p.barcode ? p.barcode.toLowerCase() : '';
+        const pBarNorm = p.barcode ? normalizeBarcode(p.barcode).toLowerCase() : '';
+
+        return (
+          pSku === codeClean ||
+          pBar === codeClean ||
+          pBarNorm === codeClean ||
+          pSku === rawClean ||
+          pBar === rawClean
+        );
+      });
+
+      if (match) {
+        if (match.currentStock > 0) {
+          addToCart(match, 1);
+          usbBarcodeScanner.playBeep();
+
+          if (toastTimeout) clearTimeout(toastTimeout);
+          setScanToast({
+            type: 'success',
+            title: match.name,
+            subtitle: `+1 ajouté (Prix : ${match.salePrice.toLocaleString('fr-FR')} ${business.currency}) • Réf : ${match.barcode || match.sku}`,
+            timestamp: Date.now()
+          });
+          toastTimeout = setTimeout(() => setScanToast(null), 4000);
+        } else {
+          usbBarcodeScanner.playError();
+
+          if (toastTimeout) clearTimeout(toastTimeout);
+          setScanToast({
+            type: 'warning',
+            title: `Stock épuisé : ${match.name}`,
+            subtitle: `Stock actuel : 0 ${match.unit}. Veuillez réapprovisionner ou ajuster l'inventaire.`,
+            timestamp: Date.now()
+          });
+          toastTimeout = setTimeout(() => setScanToast(null), 5000);
+        }
         return;
       }
 
-      if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        barcodeBuffer += e.key;
-        if (barcodeTimer) clearTimeout(barcodeTimer);
-        barcodeTimer = setTimeout(() => {
-          barcodeBuffer = '';
-        }, 50); // Scanners type very fast
-      } 
-      else if (e.key === 'Enter' && barcodeBuffer.length > 2) {
-        const scannedCode = barcodeBuffer.trim().toLowerCase();
-        barcodeBuffer = '';
-        if (barcodeTimer) clearTimeout(barcodeTimer);
-        
-        const exactSkuMatch = products.find(
-          p => !p.archived && (p.sku.toLowerCase() === scannedCode || p.barcode?.toLowerCase() === scannedCode)
-        );
-        
-        if (exactSkuMatch && exactSkuMatch.currentStock > 0) {
-          addToCart(exactSkuMatch, 1);
-        }
-      }
-    };
+      // Check if the scanned barcode corresponds to a Bon d'Avoir
+      const foundAvoir = avoirs.find(a => {
+        const num = a.numero.toLowerCase();
+        const numClean = num.replace(/-/g, '');
+        return num === codeClean || numClean === codeClean || num === rawClean;
+      });
 
-    window.addEventListener('keydown', handleGlobalKeyDown);
+      if (foundAvoir) {
+        usbBarcodeScanner.playBeep();
+        if (toastTimeout) clearTimeout(toastTimeout);
+        setScanToast({
+          type: 'avoir',
+          title: `Bon d'Avoir N° ${foundAvoir.numero} Détecté`,
+          subtitle: `Valeur : ${foundAvoir.montant.toLocaleString('fr-FR')} ${business.currency} • Bénéficiaire : ${foundAvoir.clientNom || 'Client'} • Statut : ${foundAvoir.statut.toUpperCase()}`,
+          timestamp: Date.now()
+        });
+        toastTimeout = setTimeout(() => setScanToast(null), 6000);
+        return;
+      }
+
+      // Unrecognized barcode
+      usbBarcodeScanner.playError();
+      if (toastTimeout) clearTimeout(toastTimeout);
+      setScanToast({
+        type: 'error',
+        title: `Code-barres inconnu : "${scanInfo.decoded}"`,
+        subtitle: `Aucun article ne correspond à ce code dans votre catalogue. Vérifiez la référence ou ajoutez-le dans Catalogue.`,
+        timestamp: Date.now()
+      });
+      toastTimeout = setTimeout(() => setScanToast(null), 5000);
+    });
+
     return () => {
-      window.removeEventListener('keydown', handleGlobalKeyDown);
-      if (barcodeTimer) clearTimeout(barcodeTimer);
+      unsubscribe();
+      if (toastTimeout) clearTimeout(toastTimeout);
     };
-  }, [products, addToCart]);
+  }, [products, addToCart, avoirs, business.currency]);
 
   return (
     <div className="h-[calc(100vh-4rem)] flex flex-col lg:flex-row overflow-hidden bg-slate-50 relative">
@@ -392,21 +449,29 @@ export const PosView: React.FC = () => {
               <input
                 id="input-search-product"
                 type="text"
-                placeholder="Rechercher un article (ex: Riz, Sucre, Huile, Savon...)"
+                placeholder="Rechercher un article ou code (ex: Riz, Sucre, EAN-13, SKU...)"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && searchQuery.trim() !== '') {
                     const searchLower = searchQuery.trim().toLowerCase();
+                    const normalized = normalizeBarcode(searchLower);
                     const exactSkuMatch = products.find(
-                      p => !p.archived && (p.sku.toLowerCase() === searchLower || p.barcode?.toLowerCase() === searchLower)
+                      p => !p.archived && (
+                        p.sku.toLowerCase() === searchLower || 
+                        p.barcode?.toLowerCase() === searchLower ||
+                        p.sku.toLowerCase() === normalized ||
+                        p.barcode?.toLowerCase() === normalized
+                      )
                     );
                     
                     if (exactSkuMatch && exactSkuMatch.currentStock > 0) {
                       addToCart(exactSkuMatch, 1);
+                      usbBarcodeScanner.playBeep();
                       setSearchQuery('');
                     } else if (filteredProducts.length === 1 && filteredProducts[0].currentStock > 0) {
                       addToCart(filteredProducts[0], 1);
+                      usbBarcodeScanner.playBeep();
                       setSearchQuery('');
                     }
                   }
@@ -422,12 +487,26 @@ export const PosView: React.FC = () => {
                 </button>
               )}
             </div>
+
+            {/* Camera Barcode Scanner trigger */}
             <button
               onClick={() => setShowScanner(true)}
-              className="bg-white hover:bg-slate-50 border border-l-0 border-slate-200 rounded-r-xl px-3 flex items-center justify-center text-slate-600 transition shadow-xs"
-              title="Scanner un code-barres"
+              className="bg-white hover:bg-slate-50 border border-l-0 border-slate-200 px-3 flex items-center justify-center text-slate-600 hover:text-slate-900 transition shadow-xs"
+              title="Scanner un code-barres via la caméra"
             >
               <ScanBarcode className="h-4 w-4" />
+            </button>
+
+            {/* USB Scanner Keyboard Wedge Indicator & Diagnostic modal */}
+            <button
+              id="btn-usb-scanner-trigger"
+              type="button"
+              onClick={() => setShowUsbScannerModal(true)}
+              className="bg-white hover:bg-slate-50 border border-l-0 border-slate-200 rounded-r-xl px-3 flex items-center justify-center space-x-1.5 text-slate-700 hover:text-blue-600 transition shadow-xs cursor-pointer"
+              title="Scanner USB (Douchette Clavier HID) : Détection active. Cliquez pour tester ou configurer."
+            >
+              <Keyboard className="h-4 w-4 text-slate-500" />
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
             </button>
           </div>
 
@@ -1069,6 +1148,57 @@ export const PosView: React.FC = () => {
           operatorName={currentUser?.name}
         />
       )}
+
+      {/* Floating USB Barcode Scanner Feedback Toast */}
+      {scanToast && (
+        <div className="fixed top-18 left-1/2 -translate-x-1/2 sm:left-auto sm:translate-x-0 sm:right-6 z-50 max-w-sm sm:max-w-md w-[calc(100%-2rem)] animate-in slide-in-from-top-3 fade-in duration-150">
+          <div className={`p-3.5 rounded-2xl shadow-2xl border flex items-start space-x-3 backdrop-blur-md ${
+            scanToast.type === 'success'
+              ? 'bg-emerald-900/95 text-white border-emerald-500/50 shadow-emerald-950/20'
+              : scanToast.type === 'warning'
+                ? 'bg-amber-900/95 text-white border-amber-500/50 shadow-amber-950/20'
+                : scanToast.type === 'avoir'
+                  ? 'bg-blue-900/95 text-white border-blue-500/50 shadow-blue-950/20'
+                  : 'bg-rose-900/95 text-white border-rose-500/50 shadow-rose-950/20'
+          }`}>
+            <div className={`p-2 rounded-xl shrink-0 ${
+              scanToast.type === 'success'
+                ? 'bg-emerald-700/80 text-emerald-200'
+                : scanToast.type === 'warning'
+                  ? 'bg-amber-700/80 text-amber-200'
+                  : scanToast.type === 'avoir'
+                    ? 'bg-blue-700/80 text-blue-200'
+                    : 'bg-rose-700/80 text-rose-200'
+            }`}>
+              {scanToast.type === 'success' && <CheckCircle2 className="h-5 w-5" />}
+              {scanToast.type === 'warning' && <AlertTriangle className="h-5 w-5" />}
+              {scanToast.type === 'avoir' && <Ticket className="h-5 w-5" />}
+              {scanToast.type === 'error' && <AlertTriangle className="h-5 w-5" />}
+            </div>
+            <div className="flex-1 min-w-0 pr-1">
+              <div className="flex items-center justify-between">
+                <p className="font-extrabold text-xs sm:text-sm truncate">
+                  {scanToast.title}
+                </p>
+                <span className="text-[10px] font-mono opacity-70 ml-2 shrink-0">
+                  Douchette USB
+                </span>
+              </div>
+              {scanToast.subtitle && (
+                <p className="text-[11px] leading-snug mt-0.5 opacity-90 text-slate-100">
+                  {scanToast.subtitle}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* USB Barcode Scanner Diagnostics & Options Modal */}
+      <UsbScannerModal
+        isOpen={showUsbScannerModal}
+        onClose={() => setShowUsbScannerModal(false)}
+      />
     </div>
   );
 };

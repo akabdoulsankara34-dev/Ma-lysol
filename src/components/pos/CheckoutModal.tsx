@@ -16,6 +16,7 @@ import {
   Ticket
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { usbBarcodeScanner } from '../../lib/usbBarcodeScanner';
 
 interface CheckoutModalProps {
   totalAmount: number;
@@ -87,6 +88,31 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       loyaltyTier: selectedCustomer?.tier
     });
   }, [paymentMethod, receivedAmount, changeToReturn, selectedCustomer]);
+
+  // USB Scanner Barcode Wedge listener for Avoir vouchers during checkout
+  useEffect(() => {
+    const unsubscribe = usbBarcodeScanner.subscribe((scannedCode) => {
+      const codeUpper = scannedCode.trim().toUpperCase();
+      const codeClean = codeUpper.replace(/[\s-]/g, '');
+
+      // Check if this matches any avoir
+      const foundAvoir = avoirs.find(a => {
+        const num = a.numero.toUpperCase();
+        return num === codeUpper || num.replace(/[\s-]/g, '') === codeClean;
+      });
+
+      if (foundAvoir || codeUpper.startsWith('AV')) {
+        setPaymentMethod('avoir');
+        setAvoirCodeInput(foundAvoir ? foundAvoir.numero : codeUpper);
+        setErrorMessage(null);
+        usbBarcodeScanner.playBeep();
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [avoirs]);
 
   // Rapid tender buttons for West African CFA Francs
   const tenderShortcuts = [

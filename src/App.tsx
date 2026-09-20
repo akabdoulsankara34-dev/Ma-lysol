@@ -14,6 +14,7 @@ import { SettingsView } from './components/settings/SettingsView';
 import { PlatformAdminView } from './components/admin/PlatformAdminView';
 import { AdminPinModal } from './components/admin/AdminPinModal';
 import { CompanyAccessPortal } from './components/auth/CompanyAccessPortal';
+import { UserLoginPortal } from './components/auth/UserLoginPortal';
 import { StaffPinModal } from './components/auth/StaffPinModal';
 import { CashRegisterView } from './components/cash/CashRegisterView';
 import { ExpiryManagementView } from './components/expiry/ExpiryManagementView';
@@ -30,6 +31,7 @@ const MainLayout: React.FC = () => {
     setActiveTab,
     isPlatformAdminUnlocked, 
     isBusinessAuthenticated,
+    isUserAuthenticated,
     userToSwitchWithPin,
     setUserToSwitchWithPin,
     switchUser
@@ -40,6 +42,16 @@ const MainLayout: React.FC = () => {
     return (
       <div className="min-h-screen bg-slate-900 font-sans antialiased">
         <CompanyAccessPortal />
+        <AdminPinModal />
+      </div>
+    );
+  }
+
+  // Once company code is validated, each user (owner, stock manager, cashier) must enter their password
+  if (!isUserAuthenticated && activeTab !== 'admin') {
+    return (
+      <div className="min-h-screen bg-slate-900 font-sans antialiased">
+        <UserLoginPortal />
         <AdminPinModal />
       </div>
     );

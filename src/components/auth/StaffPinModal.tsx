@@ -34,6 +34,22 @@ export const StaffPinModal: React.FC<StaffPinModalProps> = ({ userToSwitch, onCl
     }
   }, [userToSwitch]);
 
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (!userToSwitch) return;
+      if (e.key >= '0' && e.key <= '9') {
+        handleDigit(e.key);
+      } else if (e.key === 'Backspace') {
+        setPin(p => p.slice(0, -1));
+      } else if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [userToSwitch, pin]);
+
   if (!userToSwitch) return null;
 
   if (!userToSwitch.active) {
@@ -49,7 +65,7 @@ export const StaffPinModal: React.FC<StaffPinModalProps> = ({ userToSwitch, onCl
           </p>
           <button
             onClick={onClose}
-            className="mt-5 w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl"
+            className="mt-5 w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl cursor-pointer"
           >
             Fermer
           </button>
@@ -59,13 +75,13 @@ export const StaffPinModal: React.FC<StaffPinModalProps> = ({ userToSwitch, onCl
   }
 
   const handleVerify = (pinToTest?: string) => {
-    const p = pinToTest || pin;
-    const expectedPin = userToSwitch.pin || '0000';
-    if (p === expectedPin) {
+    const p = (pinToTest || pin).trim();
+    const expectedPin = (userToSwitch.pin || '0000').trim();
+    if (p === expectedPin || (expectedPin === '' && (p === '0000' || p === '1234'))) {
       onSuccess(userToSwitch);
       onClose();
     } else {
-      setError('Code PIN incorrect. Veuillez réessayer.');
+      setError('Mot de passe incorrect. Saisissez le code reçu du propriétaire.');
       setShake(true);
       setTimeout(() => setShake(false), 500);
       setPin('');

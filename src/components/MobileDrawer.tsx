@@ -24,7 +24,8 @@ import {
   WifiOff,
   RefreshCw,
   KeyRound,
-  ChevronRight
+  ChevronRight,
+  Lock
 } from 'lucide-react';
 import { NavigationTab } from '../types';
 
@@ -42,6 +43,7 @@ export const MobileDrawer: React.FC = () => {
     activeCashSession,
     requestUserSwitch,
     logoutBusiness,
+    lockUserSession,
     isOnline,
     isSyncing,
     pendingSyncCount,
@@ -373,18 +375,32 @@ export const MobileDrawer: React.FC = () => {
             )}
           </div>
 
-          {/* Business Logout */}
-          <button
-            type="button"
-            onClick={() => {
-              setIsMobileDrawerOpen(false);
-              logoutBusiness();
-            }}
-            className="w-full flex items-center justify-center space-x-2 bg-slate-800/80 hover:bg-red-900/30 text-slate-300 hover:text-red-300 py-2.5 px-3 rounded-xl text-xs font-bold transition border border-slate-700/60 hover:border-red-800/50 cursor-pointer"
-          >
-            <LogOut className="h-4 w-4" />
-            <span>Déconnexion Entreprise</span>
-          </button>
+          {/* Session Lock & Business Logout */}
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={() => {
+                setIsMobileDrawerOpen(false);
+                lockUserSession();
+              }}
+              className="w-full flex items-center justify-center space-x-2 bg-slate-800/90 hover:bg-amber-900/30 text-amber-300 hover:text-amber-200 py-2.5 px-3 rounded-xl text-xs font-bold transition border border-amber-800/40 cursor-pointer"
+            >
+              <Lock className="h-4 w-4 text-amber-400" />
+              <span>Verrouiller la session</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsMobileDrawerOpen(false);
+                logoutBusiness();
+              }}
+              className="w-full flex items-center justify-center space-x-2 bg-slate-800/80 hover:bg-red-900/30 text-slate-300 hover:text-red-300 py-2.5 px-3 rounded-xl text-xs font-bold transition border border-slate-700/60 hover:border-red-800/50 cursor-pointer"
+            >
+              <LogOut className="h-4 w-4" />
+              <span>Déconnexion Entreprise</span>
+            </button>
+          </div>
         </div>
 
       </div>
