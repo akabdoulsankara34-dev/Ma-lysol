@@ -287,7 +287,7 @@ export function generateReceiptHtml(
   ` : ''}
 
   <div class="total-banner">
-    <span>TOTAL À PAYER :</span>
+    <span>TOTAL ACHATS :</span>
     <span>${sale.total.toLocaleString('fr-FR')} ${escapeHtml(business.currency)}</span>
   </div>
 
@@ -297,6 +297,36 @@ export function generateReceiptHtml(
     <span>Mode de Règlement :</span>
     <span class="font-bold uppercase">${getPaymentLabel(sale.paymentMethod)}</span>
   </div>
+
+  ${sale.paymentBreakdown ? `
+    <div style="font-size: 11px; margin: 2px 0 4px 6px;">
+      ${sale.paymentBreakdown.cash ? `<div>• Espèces : ${sale.paymentBreakdown.cash.toLocaleString('fr-FR')} ${escapeHtml(business.currency)}</div>` : ''}
+      ${sale.paymentBreakdown.orangeMoney ? `<div>• Orange Money : ${sale.paymentBreakdown.orangeMoney.toLocaleString('fr-FR')} ${escapeHtml(business.currency)}</div>` : ''}
+      ${sale.paymentBreakdown.moovMoney ? `<div>• Moov Money : ${sale.paymentBreakdown.moovMoney.toLocaleString('fr-FR')} ${escapeHtml(business.currency)}</div>` : ''}
+      ${sale.paymentBreakdown.waveCoris ? `<div>• Wave / Coris : ${sale.paymentBreakdown.waveCoris.toLocaleString('fr-FR')} ${escapeHtml(business.currency)}</div>` : ''}
+      ${sale.paymentBreakdown.credit ? `<div>• Crédit : ${sale.paymentBreakdown.credit.toLocaleString('fr-FR')} ${escapeHtml(business.currency)}</div>` : ''}
+      ${sale.paymentBreakdown.avoir ? `<div>• Avoir déduit : ${sale.paymentBreakdown.avoir.toLocaleString('fr-FR')} ${escapeHtml(business.currency)}</div>` : ''}
+    </div>
+  ` : ''}
+
+  ${((sale.amountTendered !== undefined && sale.amountTendered > 0) || sale.paymentMethod === 'cash') ? `
+    <div class="divider"></div>
+    <div class="meta-row" style="font-size: ${is58mm ? '12.5px' : '13px'}; font-weight: 800;">
+      <span>Montant Remis :</span>
+      <span class="font-bold">${((sale.amountTendered !== undefined && sale.amountTendered > 0) ? sale.amountTendered : sale.total).toLocaleString('fr-FR')} ${escapeHtml(business.currency)}</span>
+    </div>
+    <div class="meta-row" style="font-size: ${is58mm ? '13px' : '14px'}; font-weight: 900;">
+      <span>Monnaie à Remettre :</span>
+      <span class="font-black">${((sale.changeReturned !== undefined) ? sale.changeReturned : 0).toLocaleString('fr-FR')} ${escapeHtml(business.currency)}</span>
+    </div>
+  ` : ''}
+
+  ${sale.avoirGeneratedNumero ? `
+    <div class="meta-row" style="margin-top: 4px; font-weight: 800; font-size: 11.5px;">
+      <span>Bon d'Avoir émis (Reliquat) :</span>
+      <span class="font-bold">${escapeHtml(sale.avoirGeneratedNumero)} (${(sale.avoirGeneratedAmount || 0).toLocaleString('fr-FR')} ${escapeHtml(business.currency)})</span>
+    </div>
+  ` : ''}
 
   <!-- Receipt Footer -->
   <div class="footer">

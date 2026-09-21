@@ -166,7 +166,9 @@ interface AppContextType {
       generatedAvoirAmount?: number;
       generatedClientNom?: string;
       generatedClientTel?: string;
-    }
+    },
+    amountTendered?: number,
+    changeReturned?: number
   ) => Promise<Sale>;
   cancelSale: (saleId: string, reason: string) => Promise<void>;
 
@@ -1527,7 +1529,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       generatedAvoirAmount?: number;
       generatedClientNom?: string;
       generatedClientTel?: string;
-    }
+    },
+    amountTendered?: number,
+    changeReturned?: number
   ): Promise<Sale> => {
     if (cart.length === 0) {
       throw new Error('Le panier est vide');
@@ -1622,6 +1626,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       loyaltyPointsUsed: loyaltyPointsToRedeem,
       loyaltyDiscount: loyaltyDiscountValue,
       loyaltyPointsEarned: pointsEarned,
+      amountTendered: amountTendered !== undefined ? amountTendered : (paymentMethod === 'cash' ? total : undefined),
+      changeReturned: changeReturned !== undefined ? changeReturned : (amountTendered !== undefined && amountTendered > total ? amountTendered - total : 0),
       notes,
       createdAt: nowIso,
       avoirUsedId: usedAvoirObj ? usedAvoirObj.id : avoirDetails?.usedAvoirId,
@@ -2297,7 +2303,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return closedSession;
   };
 
-  const recordCashMovement = async (type: 'cash_in' | 'cash_out', amount: number, reason: string) => {
+  const recordCashMovement = useCallback(async (type: 'cash_in' | 'cash_out', amount: number, reason: string) => {
     if (!activeCashSession) {
       throw new Error('Veuillez d\'abord ouvrir une session de caisse.');
     }
@@ -2316,7 +2322,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setCashSessions(prev => prev.map(cs => cs.id === activeCashSession.id ? updatedSession : cs));
     await syncMutation('cash_sessions', activeCashSession.id, 'update', updatedSession, `Mouvement caisse ${type}`);
-  };
+  }, [activeCashSession, syncMutation]);
 
   // Avoirs Module Methods
   const getAvoirByNumero = useCallback((rawNumero: string): Avoir | undefined => {

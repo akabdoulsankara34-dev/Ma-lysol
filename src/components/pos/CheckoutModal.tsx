@@ -144,6 +144,14 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const handleValidate = async () => {
     setErrorMessage(null);
 
+    // Validation for cash sale
+    if (paymentMethod === 'cash') {
+      if (receivedAmount < totalAmount) {
+        setErrorMessage(`Le montant remis (${receivedAmount.toLocaleString()} ${business.currency}) est insuffisant pour régler le total des achats (${totalAmount.toLocaleString()} ${business.currency}).`);
+        return;
+      }
+    }
+
     // Validation for credit sale
     if (paymentMethod === 'credit') {
       if (!customerId || customerId === 'cust_comptoir') {
@@ -220,6 +228,20 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         };
       }
 
+      // Pass calculated tender info:
+      // - For cash: received amount and change
+      // - For credit: 0 received (unpaid balance remaining)
+      // - For split: actual paid amount (total minus credit portion)
+      // - For digital payments: total amount
+      const paidReceived = paymentMethod === 'credit' 
+        ? 0 
+        : paymentMethod === 'cash' 
+          ? receivedAmount 
+          : paymentMethod === 'split'
+            ? Math.max(0, totalAmount - splitCredit)
+            : totalAmount;
+      const changeGiven = paymentMethod === 'cash' ? changeToReturn : 0;
+
       const sale = await completeSale(
         paymentMethod,
         customerId || undefined,
@@ -228,7 +250,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         splitDetails,
         notes.trim() || undefined,
         0,
-        avoirDetails
+        avoirDetails,
+        paidReceived,
+        changeGiven
       );
 
       // Trigger celebratory confetti burst
@@ -242,20 +266,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       } catch (e) {
         // ignore in non-canvas environments
       }
-
-      // Pass calculated tender info for customer display:
-      // - For cash: received amount and change
-      // - For credit: 0 received (unpaid balance remaining)
-      // - For split: actual paid amount (total minus credit portion)
-      // - For digital payments: total amount
-      const paidReceived = paymentMethod === 'credit' 
-        ? 0 
-        : paymentMethod === 'cash' 
-          ? receivedAmount 
-          : paymentMethod === 'split'
-            ? Math.max(0, totalAmount - splitCredit)
-            : totalAmount;
-      const changeGiven = paymentMethod === 'cash' ? changeToReturn : 0;
 
       onSuccess(
         sale, 
@@ -445,14 +455,43 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 ))}
               </div>
 
-              {/* Rendu Monnaie / Change */}
-              <div className="pt-2 border-t border-blue-200/60 flex items-center justify-between text-xs">
-                <span className="font-medium text-blue-950">Monnaie à rendre au client :</span>
-                <span className={`text-sm font-extrabold px-2 py-0.5 rounded ${
-                  changeToReturn > 0 ? 'bg-amber-100 text-amber-900 font-mono' : 'text-slate-600'
+              {/* Rendu Monnaie / Change Breakdown */}
+              <div className="pt-2.5 border-t border-blue-200/80 space-y-1.5 text-xs">
+                <div className="flex items-center justify-between text-slate-700">
+                  <span>Somme d'achat (Total) :</span>
+                  <span className="font-bold text-slate-900 font-mono">
+                    {totalAmount.toLocaleString()} {business.currency}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-blue-950 font-semibold">
+                  <span>Montant remis par le client :</span>
+                  <span className="font-bold text-blue-900 font-mono">
+                    {receivedAmount ? receivedAmount.toLocaleString() : 0} {business.currency}
+                  </span>
+                </div>
+                <div className={`p-2.5 rounded-xl border flex items-center justify-between transition ${
+                  receivedAmount < totalAmount
+                    ? 'bg-rose-50 border-rose-200 text-rose-900'
+                    : changeToReturn > 0
+                    ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                    : 'bg-slate-100 border-slate-200 text-slate-700'
                 }`}>
-                  {changeToReturn.toLocaleString()} {business.currency}
-                </span>
+                  <span className="font-bold">
+                    {receivedAmount < totalAmount ? 'Montant insuffisant (manque) :' : 'Monnaie à remettre au client :'}
+                  </span>
+                  <span className={`text-base font-black font-mono ${
+                    receivedAmount < totalAmount
+                      ? 'text-rose-600'
+                      : changeToReturn > 0
+                      ? 'text-emerald-700'
+                      : 'text-slate-800'
+                  }`}>
+                    {receivedAmount < totalAmount
+                      ? `${(totalAmount - receivedAmount).toLocaleString()} ${business.currency}`
+                      : `${changeToReturn.toLocaleString()} ${business.currency}`
+                    }
+                  </span>
+                </div>
               </div>
 
               {/* Change converted to Avoir toggle */}

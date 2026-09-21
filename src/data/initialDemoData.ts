@@ -713,6 +713,8 @@ export const initialSales: Sale[] = [
     totalCost: 32500,
     profit: 18000,
     paymentMethod: 'cash',
+    amountTendered: 55000,
+    changeReturned: 4500,
     loyaltyPointsEarned: 50,
     notes: 'Paiement espèces direct au comptoir.',
     createdAt: '2026-08-16T15:20:00Z',

@@ -244,11 +244,26 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
 
       encoder.bold(true)
         .textSize(2, 2)
-        .row('TOTAL :', `${sale.total.toLocaleString()} ${business.currency}`, 21)
+        .row('TOTAL ACHATS :', `${sale.total.toLocaleString()} ${business.currency}`, 21)
         .textSize(1, 1)
         .bold(true)
-        .row('Reglement :', getPaymentLabel(sale.paymentMethod), 42)
-        .divider('=', 42)
+        .row('Reglement :', getPaymentLabel(sale.paymentMethod), 42);
+
+      if ((sale.amountTendered !== undefined && sale.amountTendered > 0) || sale.paymentMethod === 'cash') {
+        const tender = (sale.amountTendered !== undefined && sale.amountTendered > 0) ? sale.amountTendered : sale.total;
+        const change = sale.changeReturned !== undefined ? sale.changeReturned : 0;
+        encoder.divider('-', 42)
+          .bold(true)
+          .row('Montant Remis :', `${tender.toLocaleString()} ${business.currency}`, 42)
+          .row('Monnaie a Rendre :', `${change.toLocaleString()} ${business.currency}`, 42);
+      }
+
+      if (sale.avoirGeneratedNumero) {
+        encoder.bold(true)
+          .row('Avoir emis :', `#${sale.avoirGeneratedNumero} (${(sale.avoirGeneratedAmount || 0).toLocaleString()} ${business.currency})`, 42);
+      }
+
+      encoder.divider('=', 42)
         .align('center')
         .textLine(business.receiptFooter || 'Merci pour votre achat !')
         .textLine('BizPilot BF POS80 BLE')
@@ -316,6 +331,15 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
     }
     text += `*TOTAL PAYÉ : ${sale.total.toLocaleString()} ${business.currency}*\n`;
     text += `Mode de règlement : ${getPaymentLabel(sale.paymentMethod)}\n`;
+    if ((sale.amountTendered !== undefined && sale.amountTendered > 0) || sale.paymentMethod === 'cash') {
+      const tender = (sale.amountTendered !== undefined && sale.amountTendered > 0) ? sale.amountTendered : sale.total;
+      const change = sale.changeReturned !== undefined ? sale.changeReturned : 0;
+      text += `Montant remis : ${tender.toLocaleString()} ${business.currency}\n`;
+      text += `Monnaie rendue : ${change.toLocaleString()} ${business.currency}\n`;
+    }
+    if (sale.avoirGeneratedNumero) {
+      text += `Bon d'Avoir émis : ${sale.avoirGeneratedNumero} (${(sale.avoirGeneratedAmount || 0).toLocaleString()} ${business.currency})\n`;
+    }
     text += `--------------------------------\n`;
     text += `${business.receiptFooter || 'Merci pour votre confiance !'}\n`;
     text += `📞 Contact : ${business.phone}\n`;
@@ -480,13 +504,43 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
                 </>
               )}
               <div className="flex justify-between text-base font-black text-black pt-1">
-                <span>TOTAL À PAYER :</span>
+                <span>TOTAL DES ACHATS :</span>
                 <span className="tracking-tight">{sale.total.toLocaleString('fr-FR')} {business.currency}</span>
               </div>
               <div className="flex justify-between text-xs text-black pt-1">
                 <span className="font-semibold">Mode de Règlement :</span>
                 <span className="font-black text-black uppercase">{getPaymentLabel(sale.paymentMethod)}</span>
               </div>
+
+              {/* Breakdown if split payment */}
+              {sale.paymentBreakdown && (
+                <div className="text-[11px] text-slate-800 space-y-0.5 pl-2 pt-1 border-l-2 border-slate-300">
+                  {sale.paymentBreakdown.cash ? <div>• Espèces : {sale.paymentBreakdown.cash.toLocaleString('fr-FR')} {business.currency}</div> : null}
+                  {sale.paymentBreakdown.orangeMoney ? <div>• Orange Money : {sale.paymentBreakdown.orangeMoney.toLocaleString('fr-FR')} {business.currency}</div> : null}
+                  {sale.paymentBreakdown.moovMoney ? <div>• Moov Money : {sale.paymentBreakdown.moovMoney.toLocaleString('fr-FR')} {business.currency}</div> : null}
+                  {sale.paymentBreakdown.waveCoris ? <div>• Wave / Coris : {sale.paymentBreakdown.waveCoris.toLocaleString('fr-FR')} {business.currency}</div> : null}
+                  {sale.paymentBreakdown.credit ? <div>• Crédit : {sale.paymentBreakdown.credit.toLocaleString('fr-FR')} {business.currency}</div> : null}
+                  {sale.paymentBreakdown.avoir ? <div>• Avoir déduit : {sale.paymentBreakdown.avoir.toLocaleString('fr-FR')} {business.currency}</div> : null}
+                </div>
+              )}
+
+              {/* Montant Remis & Monnaie à Remettre */}
+              {((sale.amountTendered !== undefined && sale.amountTendered > 0) || sale.paymentMethod === 'cash') && (
+                <div className="mt-2 pt-2 border-t border-dashed border-slate-400 space-y-1">
+                  <div className="flex justify-between text-xs font-bold text-black">
+                    <span>Montant Remis :</span>
+                    <span className="font-mono font-bold">
+                      {((sale.amountTendered !== undefined && sale.amountTendered > 0) ? sale.amountTendered : sale.total).toLocaleString('fr-FR')} {business.currency}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs font-black text-black bg-slate-100 p-1.5 rounded-lg border border-slate-300">
+                    <span className="text-slate-900">Monnaie à Remettre :</span>
+                    <span className="font-mono text-emerald-800 text-sm">
+                      {((sale.changeReturned !== undefined) ? sale.changeReturned : 0).toLocaleString('fr-FR')} {business.currency}
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {/* Mention Avoir généré si applicable */}
               {sale.avoirGeneratedNumero && (

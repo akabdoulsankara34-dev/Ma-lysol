@@ -141,6 +141,8 @@ export interface Sale {
   loyaltyPointsUsed?: number;
   loyaltyDiscount?: number;
   loyaltyPointsEarned?: number;
+  amountTendered?: number; // Montant remis par le client (espèces / reçu)
+  changeReturned?: number; // Monnaie à rendre / rendue au client
   quotationId?: string;
   avoirUsedId?: string;
   avoirUsedNumero?: string;
