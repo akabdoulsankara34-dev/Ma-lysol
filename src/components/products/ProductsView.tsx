@@ -89,12 +89,16 @@ export const ProductsView: React.FC = () => {
   // Scanner State
   const [showScanner, setShowScanner] = useState(false);
   const [scannerTarget, setScannerTarget] = useState<'search' | 'form'>('search');
+  const [quickScanProduct, setQuickScanProduct] = useState<Product | null>(null);
 
   // USB Barcode Scanner listener on Products / Catalog page
   useEffect(() => {
     const unsubscribe = usbBarcodeScanner.subscribe((scannedCode) => {
       usbBarcodeScanner.playBeep();
-      if (showModal) {
+      if (quickScanProduct) {
+        updateProduct(quickScanProduct.id, { barcode: scannedCode });
+        setQuickScanProduct(null);
+      } else if (showModal) {
         setFormBarcode(scannedCode);
         setFormSku(prev => !prev || prev.startsWith('ART-') ? scannedCode : prev);
       } else {
@@ -105,7 +109,7 @@ export const ProductsView: React.FC = () => {
     return () => {
       unsubscribe();
     };
-  }, [showModal]);
+  }, [showModal, quickScanProduct, updateProduct]);
 
   // Quick Restock Modal
   const [restockProduct, setRestockProduct] = useState<Product | null>(null);
@@ -412,9 +416,27 @@ export const ProductsView: React.FC = () => {
                           </div>
                           <div>
                             <p className="font-bold text-slate-900 text-xs sm:text-sm">{p.name}</p>
-                            <p className="text-[11px] text-slate-400 font-mono">
-                              Réf: {p.sku} • {p.unit}
-                            </p>
+                            <div className="flex items-center space-x-2 mt-0.5">
+                              <span className="text-[11px] text-slate-400 font-mono">
+                                Réf: {p.sku} • {p.unit}
+                              </span>
+                              {p.barcode ? (
+                                <span className="inline-flex items-center space-x-1 font-mono text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded font-bold border border-slate-200">
+                                  <Barcode className="h-3 w-3 text-slate-400" />
+                                  <span>{p.barcode}</span>
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setQuickScanProduct(p)}
+                                  className="inline-flex items-center space-x-1 text-[10px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-1.5 py-0.2 rounded border border-blue-200 transition cursor-pointer"
+                                  title="Scanner le code-barres avec la douchette USB pour l'attribuer à cet article"
+                                >
+                                  <Barcode className="h-3 w-3" />
+                                  <span>+ Scanner code</span>
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </td>
@@ -863,6 +885,66 @@ export const ProductsView: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* QUICK SCAN BARCODE MODAL FOR PRODUCT */}
+      {quickScanProduct && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-2xs flex items-center justify-center p-3 animate-in fade-in duration-100">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2.5 bg-blue-100 text-blue-700 rounded-xl">
+                  <Barcode className="h-6 w-6" />
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-sm sm:text-base text-slate-900">
+                    Scanner le Code-barres
+                  </h4>
+                  <p className="text-xs text-slate-500 font-bold">
+                    Pour : <span className="text-blue-600">{quickScanProduct.name}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQuickScanProduct(null)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-4 bg-slate-900 text-white rounded-2xl text-center space-y-2 border border-slate-800 shadow-inner">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block animate-ping mr-2"></span>
+              <p className="font-extrabold text-sm text-emerald-400">ÉCOUTE DOUCHETTE USB ACTIVE</p>
+              <p className="text-xs text-slate-300">
+                Pointez simplement votre douchette USB sur le code-barres de l'article et appuyez sur la gâchette.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const autoCode = `618${Math.floor(100000000 + Math.random() * 900000000)}`;
+                  updateProduct(quickScanProduct.id, { barcode: autoCode });
+                  usbBarcodeScanner.playBeep();
+                  setQuickScanProduct(null);
+                }}
+                className="text-xs font-bold text-slate-500 hover:text-blue-600 underline cursor-pointer"
+              >
+                Générer un code aléatoire
+              </button>
+              <button
+                type="button"
+                onClick={() => setQuickScanProduct(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl cursor-pointer"
+              >
+                Annuler
+              </button>
+            </div>
           </div>
         </div>
       )}

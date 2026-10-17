@@ -14,7 +14,12 @@ import {
   Activity,
   MousePointer,
   Sparkles,
-  Barcode
+  Barcode,
+  Sliders,
+  QrCode,
+  Link2,
+  Search,
+  ExternalLink
 } from 'lucide-react';
 import {
   usbBarcodeScanner,
@@ -23,6 +28,8 @@ import {
   RawKeyStrokeEvent,
 } from '../../lib/usbBarcodeScanner';
 import { useApp } from '../../context/AppContext';
+import { generateCode128Svg } from '../../lib/barcodeGenerator';
+import { Product } from '../../types';
 
 interface UsbScannerModalProps {
   isOpen: boolean;
@@ -30,27 +37,30 @@ interface UsbScannerModalProps {
 }
 
 export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClose }) => {
-  const { products, business } = useApp();
+  const { products, business, updateProduct, addToCart } = useApp();
   const [settings, setSettings] = useState<UsbScannerSettings>(usbBarcodeScanner.getSettings());
   const [testScans, setTestScans] = useState<{ barcode: string; info: LastScanInfo }[]>([]);
-  const [activeTab, setActiveTab] = useState<'diagnostic' | 'test' | 'settings' | 'guide'>('diagnostic');
+  const [activeTab, setActiveTab] = useState<'diagnostic' | 'codes' | 'test' | 'settings' | 'guide'>('diagnostic');
   const [isWindowFocused, setIsWindowFocused] = useState<boolean>(true);
   
   // Real-time keystroke live monitor
   const [recentKeyStrokes, setRecentKeyStrokes] = useState<RawKeyStrokeEvent[]>([]);
   const [currentBufferDisplay, setCurrentBufferDisplay] = useState<string>('');
+  const [lastPulseTimestamp, setLastPulseTimestamp] = useState<number>(0);
   const testInputRef = useRef<HTMLInputElement>(null);
+
+  // Link barcode to product modal state
+  const [linkingBarcode, setLinkingBarcode] = useState<string | null>(null);
+  const [productSearch, setProductSearch] = useState<string>('');
+  const [linkSuccessMsg, setLinkSuccessMsg] = useState<string | null>(null);
 
   // Monitor window focus
   useEffect(() => {
-    const handleFocus = () => setIsWindowFocused(true);
-    const handleBlur = () => setIsWindowFocused(false);
-    
-    window.addEventListener('focus', handleFocus);
-    window.addEventListener('blur', handleBlur);
+    const unsubscribe = usbBarcodeScanner.onFocusChange((focused) => {
+      setIsWindowFocused(focused);
+    });
     return () => {
-      window.removeEventListener('focus', handleFocus);
-      window.removeEventListener('blur', handleBlur);
+      unsubscribe();
     };
   }, []);
 
@@ -66,11 +76,13 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
     const unsubscribeScan = usbBarcodeScanner.subscribe((barcode, info) => {
       setTestScans((prev) => [{ barcode, info }, ...prev.slice(0, 9)]);
       setCurrentBufferDisplay('');
+      setLastPulseTimestamp(Date.now());
     });
 
     const unsubscribeRaw = usbBarcodeScanner.subscribeRawKeys((rawEvent) => {
       setRecentKeyStrokes((prev) => [rawEvent, ...prev.slice(0, 7)]);
       setCurrentBufferDisplay(rawEvent.currentBuffer);
+      setLastPulseTimestamp(Date.now());
     });
 
     return () => {
@@ -95,6 +107,12 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
     usbBarcodeScanner.playError();
   };
 
+  const handleActivateFocus = () => {
+    usbBarcodeScanner.focusApplication();
+    setIsWindowFocused(true);
+    testInputRef.current?.focus();
+  };
+
   const findProductForCode = (code: string, alternatives: string[] = []) => {
     const cClean = code.trim().toLowerCase();
     const searchKeys = [cClean, ...alternatives.map(a => a.toLowerCase().trim())];
@@ -103,18 +121,54 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
       if (p.archived) return false;
       const pSku = p.sku.toLowerCase().trim();
       const pBar = p.barcode ? p.barcode.toLowerCase().trim() : '';
-      return searchKeys.some(k => k === pSku || k === pBar || k === pSku.replace(/[-\s._]/g, '') || (pBar && k === pBar.replace(/[-\s._]/g, '')));
+      const pName = p.name.toLowerCase().trim();
+      return searchKeys.some(k => 
+        k === pSku || 
+        k === pBar || 
+        k === pName ||
+        k === pSku.replace(/[-\s._]/g, '') || 
+        (pBar && k === pBar.replace(/[-\s._]/g, '')) ||
+        k === pName.replace(/[-\s._]/g, '')
+      );
     });
   };
 
+  const handleAssignBarcodeToProduct = async (product: Product, barcode: string) => {
+    try {
+      await updateProduct(product.id, { barcode });
+      setLinkSuccessMsg(`✅ Code "${barcode}" lié avec succès à "${product.name}" !`);
+      setTimeout(() => {
+        setLinkingBarcode(null);
+        setLinkSuccessMsg(null);
+      }, 2000);
+    } catch (err) {
+      console.error('Erreur liaison code-barres:', err);
+    }
+  };
+
+  const filteredProductsToLink = products
+    .filter(p => !p.archived)
+    .filter(p => {
+      if (!productSearch.trim()) return true;
+      const term = productSearch.toLowerCase().trim();
+      return (
+        p.name.toLowerCase().includes(term) ||
+        p.sku.toLowerCase().includes(term) ||
+        (p.barcode && p.barcode.toLowerCase().includes(term))
+      );
+    })
+    .slice(0, 15);
+
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-150">
-      <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]">
+      <div className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl overflow-hidden border border-slate-200 flex flex-col max-h-[92vh]">
         
         {/* Header */}
         <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
           <div className="flex items-center space-x-2.5">
-            <div className="p-2.5 bg-blue-600 rounded-xl shadow-md">
+            <div className={`p-2.5 rounded-xl shadow-md transition-all duration-300 ${
+              Date.now() - lastPulseTimestamp < 1500 ? 'bg-emerald-500 scale-110 ring-4 ring-emerald-400/40' : 'bg-blue-600'
+            }`}>
               <Keyboard className="h-5 w-5 text-white" />
             </div>
             <div>
@@ -126,7 +180,7 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
-                Diagnostic en direct & prise en charge de toutes les marques de douchettes
+                Diagnostic en direct & prise en charge de toutes les marques de douchettes (Netum, Inateck, Tera, etc.)
               </p>
             </div>
           </div>
@@ -146,48 +200,65 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
             onClick={() => setActiveTab('diagnostic')}
             className={`pb-2.5 px-3 border-b-2 transition flex items-center space-x-1.5 cursor-pointer whitespace-nowrap ${
               activeTab === 'diagnostic'
-                ? 'border-blue-600 text-blue-600'
+                ? 'border-blue-600 text-blue-600 bg-white rounded-t-lg'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
             <Activity className="h-3.5 w-3.5" />
             <span>Diagnostic & Détection Directe</span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('codes')}
+            className={`pb-2.5 px-3 border-b-2 transition flex items-center space-x-1.5 cursor-pointer whitespace-nowrap ${
+              activeTab === 'codes'
+                ? 'border-blue-600 text-blue-600 bg-white rounded-t-lg'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <QrCode className="h-3.5 w-3.5 text-indigo-600" />
+            <span className="font-extrabold text-indigo-700">Codes de Réglage Douchette</span>
+            <span className="px-1.5 py-0.2 rounded-full text-[9px] bg-indigo-100 text-indigo-800">Scannable</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setActiveTab('test')}
             className={`pb-2.5 px-3 border-b-2 transition flex items-center space-x-1.5 cursor-pointer whitespace-nowrap ${
               activeTab === 'test'
-                ? 'border-blue-600 text-blue-600'
+                ? 'border-blue-600 text-blue-600 bg-white rounded-t-lg'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
             <Zap className="h-3.5 w-3.5" />
             <span>Historique & Simulation</span>
           </button>
+
           <button
             type="button"
             onClick={() => setActiveTab('settings')}
             className={`pb-2.5 px-3 border-b-2 transition flex items-center space-x-1.5 cursor-pointer whitespace-nowrap ${
               activeTab === 'settings'
-                ? 'border-blue-600 text-blue-600'
+                ? 'border-blue-600 text-blue-600 bg-white rounded-t-lg'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
-            <Settings className="h-3.5 w-3.5" />
-            <span>Réglages Clavier & Vitesse</span>
+            <Sliders className="h-3.5 w-3.5" />
+            <span>Réglages & Vitesse</span>
           </button>
+
           <button
             type="button"
             onClick={() => setActiveTab('guide')}
             className={`pb-2.5 px-3 border-b-2 transition flex items-center space-x-1.5 cursor-pointer whitespace-nowrap ${
               activeTab === 'guide'
-                ? 'border-blue-600 text-blue-600'
+                ? 'border-blue-600 text-blue-600 bg-white rounded-t-lg'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
             <HelpCircle className="h-3.5 w-3.5" />
-            <span>Dépannage & Guide</span>
+            <span>Guide Pas-à-Pas</span>
           </button>
         </div>
 
@@ -206,14 +277,14 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
                   </div>
                   <div>
                     <div className="font-bold text-emerald-900">Intercepteur Matériel Prêt</div>
-                    <div className="text-emerald-700 text-[11px]">Écoute globale sur toute l'application</div>
+                    <div className="text-emerald-700 text-[11px]">Écoute globale sur toute l'application (Délai : {settings.maxIntervalMs}ms)</div>
                   </div>
                 </div>
 
-                <div className={`p-3 rounded-xl border flex items-center justify-between text-xs ${
+                <div className={`p-3 rounded-xl border flex items-center justify-between text-xs transition ${
                   isWindowFocused 
                     ? 'bg-blue-50 border-blue-200 text-blue-900' 
-                    : 'bg-amber-50 border-amber-300 text-amber-900'
+                    : 'bg-amber-100 border-amber-400 text-amber-950 shadow-md ring-2 ring-amber-300'
                 }`}>
                   <div className="flex items-center space-x-2.5">
                     <MousePointer className={`h-4 w-4 ${isWindowFocused ? 'text-blue-600' : 'text-amber-600 animate-bounce'}`} />
@@ -229,14 +300,10 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
                   {!isWindowFocused && (
                     <button
                       type="button"
-                      onClick={() => {
-                        window.focus();
-                        testInputRef.current?.focus();
-                        setIsWindowFocused(true);
-                      }}
-                      className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[10px] font-bold cursor-pointer"
+                      onClick={handleActivateFocus}
+                      className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold cursor-pointer shadow-xs animate-pulse"
                     >
-                      Activer
+                      Activer le focus
                     </button>
                   )}
                 </div>
@@ -246,7 +313,9 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
               <div className="bg-slate-900 rounded-2xl p-4 text-white space-y-3 border border-slate-800 shadow-xl">
                 <div className="flex items-center justify-between text-xs">
                   <div className="flex items-center space-x-2 text-slate-300 font-mono">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
+                    <span className={`w-2.5 h-2.5 rounded-full ${
+                      Date.now() - lastPulseTimestamp < 1500 ? 'bg-emerald-400 ring-4 ring-emerald-400/50' : 'bg-emerald-400 animate-ping'
+                    }`}></span>
                     <span className="font-bold text-emerald-400">ZONE D'ÉCOUTE ET DE SCAN DIRECT :</span>
                   </div>
                   <span className="text-[10px] font-mono bg-slate-800 px-2 py-0.5 rounded text-slate-400">
@@ -359,14 +428,27 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
                         </span>
                       </div>
                     ) : (
-                      <div className="p-3 bg-amber-50 rounded-xl border border-amber-300 flex items-center justify-between text-xs text-amber-900">
+                      <div className="p-3.5 bg-amber-50 rounded-xl border border-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-amber-900">
                         <div className="flex items-center space-x-2">
                           <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
-                          <span>Ce code est bien reçu par le scanner, mais n'est pas encore associé à un produit.</span>
+                          <div>
+                            <span className="font-bold">Code non attribué :</span>
+                            <span className="text-slate-600 text-[11px] ml-1">
+                              Ce code est bien reçu par le scanner, mais aucun article ne le porte encore.
+                            </span>
+                          </div>
                         </div>
-                        <span className="text-[10px] font-bold bg-amber-200 px-2 py-0.5 rounded text-amber-800">
-                          Non répertorié
-                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLinkingBarcode(testScans[0].barcode);
+                            setProductSearch('');
+                          }}
+                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold flex items-center space-x-1.5 shrink-0 shadow-xs cursor-pointer"
+                        >
+                          <Link2 className="h-3.5 w-3.5" />
+                          <span>Lier à un article existant</span>
+                        </button>
                       </div>
                     );
                   })()}
@@ -376,13 +458,158 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
             </div>
           )}
 
-          {/* TAB 2: HISTORIQUE ET SIMULATION */}
+          {/* TAB 2: CODES DE RÉGLAGE DOUCHETTE MATÉRIEL (NETUM / UNIVERSEL) */}
+          {activeTab === 'codes' && (
+            <div className="space-y-4">
+              <div className="p-4 bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-200 rounded-2xl space-y-2">
+                <div className="flex items-center space-x-2">
+                  <div className="p-1.5 bg-indigo-600 text-white rounded-lg">
+                    <QrCode className="h-4 w-4" />
+                  </div>
+                  <h4 className="font-extrabold text-indigo-950 text-sm">
+                    Codes-barres Officiels de Configuration & Réparation Douchette
+                  </h4>
+                </div>
+                <p className="text-xs text-slate-700 leading-relaxed">
+                  Si votre douchette USB s'allume mais <strong>n'écrit rien sur l'ordinateur</strong>, elle a probablement été basculée par erreur en mode <em>Port Série Virtuel (VCOM)</em> ou a perdu son suffixe <em>Entrée (CR)</em>. 
+                  <strong> Pointez la douchette directement sur ces codes affichés sur votre écran pour la réparer instantanément :</strong>
+                </p>
+              </div>
+
+              {/* Barcode Cards Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                
+                {/* 1. Mode Clavier USB HID */}
+                <div className="p-4 bg-white border-2 border-indigo-300 rounded-2xl shadow-xs space-y-2.5 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="px-2 py-0.5 bg-indigo-600 text-white rounded-md text-[10px] font-black uppercase">
+                        Étape 1 (Indispensable)
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400">Netum / Tera / Universel</span>
+                    </div>
+                    <h5 className="font-extrabold text-slate-900 text-xs">
+                      1. Activer le Mode Clavier USB (USB HID Keyboard)
+                    </h5>
+                    <p className="text-[11px] text-slate-500">
+                      Force le scanner à se comporter comme un clavier USB standard afin que le navigateur web et BizPilot puissent recevoir les codes.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col items-center justify-center">
+                    <div 
+                      className="w-full max-w-[240px] py-1"
+                      dangerouslySetInnerHTML={{ 
+                        __html: generateCode128Svg('USB-HID-KB', { height: 60, fontSize: 10 }) 
+                      }} 
+                    />
+                    <span className="text-[10px] font-mono font-bold text-indigo-600 mt-1">
+                      Scannez ce code sur l'écran
+                    </span>
+                  </div>
+                </div>
+
+                {/* 2. Ajouter Touche Entrée (CR / Enter Suffix) */}
+                <div className="p-4 bg-white border-2 border-indigo-300 rounded-2xl shadow-xs space-y-2.5 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="px-2 py-0.5 bg-emerald-600 text-white rounded-md text-[10px] font-black uppercase">
+                        Étape 2 (Recommandé)
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400">Suffixe Validation</span>
+                    </div>
+                    <h5 className="font-extrabold text-slate-900 text-xs">
+                      2. Ajouter la Touche Entrée (Suffixe Enter / CR+LF)
+                    </h5>
+                    <p className="text-[11px] text-slate-500">
+                      Configure la douchette pour qu'elle valide immédiatement après avoir lu le code, permettant l'ajout instantané en caisse.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col items-center justify-center">
+                    <div 
+                      className="w-full max-w-[240px] py-1"
+                      dangerouslySetInnerHTML={{ 
+                        __html: generateCode128Svg('ENTER-SUFFIX', { height: 60, fontSize: 10 }) 
+                      }} 
+                    />
+                    <span className="text-[10px] font-mono font-bold text-emerald-600 mt-1">
+                      Scannez ce code sur l'écran
+                    </span>
+                  </div>
+                </div>
+
+                {/* 3. Réinitialisation Usine */}
+                <div className="p-4 bg-white border border-slate-300 rounded-2xl shadow-xs space-y-2.5 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="px-2 py-0.5 bg-rose-600 text-white rounded-md text-[10px] font-black uppercase">
+                        Secours
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400">Reset</span>
+                    </div>
+                    <h5 className="font-extrabold text-slate-900 text-xs">
+                      3. Réinitialisation Paramètres d'Usine (Factory Reset)
+                    </h5>
+                    <p className="text-[11px] text-slate-500">
+                      Restaure la douchette à ses réglages d'origine si elle a été déréglée ou si un mauvais code a été scanné.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col items-center justify-center">
+                    <div 
+                      className="w-full max-w-[240px] py-1"
+                      dangerouslySetInnerHTML={{ 
+                        __html: generateCode128Svg('FACTORY-RESET', { height: 60, fontSize: 10 }) 
+                      }} 
+                    />
+                    <span className="text-[10px] font-mono font-bold text-rose-600 mt-1">
+                      Scannez ce code sur l'écran
+                    </span>
+                  </div>
+                </div>
+
+                {/* 4. Test Immédiat Article Réel */}
+                <div className="p-4 bg-white border-2 border-emerald-400 rounded-2xl shadow-xs space-y-2.5 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="px-2 py-0.5 bg-emerald-600 text-white rounded-md text-[10px] font-black uppercase">
+                        Test Direct
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400">Article Démo</span>
+                    </div>
+                    <h5 className="font-extrabold text-slate-900 text-xs">
+                      4. Test Immédiat : Robe Soie Koko Dunda
+                    </h5>
+                    <p className="text-[11px] text-slate-500">
+                      Scannez ce code EAN-13 réel. S'il s'affiche en vert dans l'onglet Diagnostic, votre douchette fonctionne parfaitement !
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col items-center justify-center">
+                    <div 
+                      className="w-full max-w-[240px] py-1"
+                      dangerouslySetInnerHTML={{ 
+                        __html: generateCode128Svg('618110001001', { height: 60, fontSize: 10 }) 
+                      }} 
+                    />
+                    <span className="text-[10px] font-mono font-bold text-emerald-600 mt-1">
+                      618110001001 (Robe Koko Dunda)
+                    </span>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: HISTORIQUE ET SIMULATION */}
           {activeTab === 'test' && (
             <div className="space-y-4">
               <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2">
                 <div className="font-bold text-xs text-slate-800">Tester avec des articles réels du catalogue :</div>
                 <div className="flex flex-wrap gap-2">
-                  {products.slice(0, 4).map(p => (
+                  {products.slice(0, 5).map(p => (
                     <button
                       key={p.id}
                       type="button"
@@ -390,7 +617,7 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
                       className="px-3 py-1.5 text-xs font-bold bg-white hover:bg-blue-50 border border-slate-200 hover:border-blue-300 text-slate-800 rounded-xl transition flex items-center space-x-1.5 shadow-2xs cursor-pointer"
                     >
                       <Package className="h-3.5 w-3.5 text-blue-600" />
-                      <span>{p.name.slice(0, 16)}</span>
+                      <span>{p.name.slice(0, 18)}</span>
                       <span className="text-[10px] font-mono text-slate-400">({p.barcode || p.sku})</span>
                     </button>
                   ))}
@@ -456,7 +683,7 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
             </div>
           )}
 
-          {/* TAB 3: RÉGLAGES */}
+          {/* TAB 4: RÉGLAGES */}
           {activeTab === 'settings' && (
             <div className="space-y-4 text-xs">
               {/* Option: Scanner actif */}
@@ -480,7 +707,7 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
                 <div className="space-y-0.5">
                   <div className="font-bold text-slate-800">Prise en charge des Douchettes Sans Touche Entrée</div>
                   <div className="text-[11px] text-slate-500">
-                    Valide automatiquement le scan dès qu'une pause de 120ms suit une série de frappes rapides (très utile si votre lecteur n'envoie pas la touche Entrée).
+                    Valide automatiquement le scan dès qu'une pause de {settings.suffixTimeoutMs}ms suit une série de frappes rapides (très utile si votre lecteur n'envoie pas la touche Entrée).
                   </div>
                 </div>
                 <input
@@ -560,28 +787,28 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
               {/* Cadence threshold slider */}
               <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-slate-800">Sensibilité / Délai Max ({settings.maxIntervalMs} ms)</span>
-                  <span className="text-[11px] font-bold text-blue-600">Recommandé: 100 ms</span>
+                  <span className="font-bold text-slate-800">Tolérance Délai Max par Touche ({settings.maxIntervalMs} ms)</span>
+                  <span className="text-[11px] font-bold text-blue-600">Recommandé: 180 ms</span>
                 </div>
                 <input
                   type="range"
-                  min="40"
-                  max="160"
-                  step="5"
+                  min="50"
+                  max="250"
+                  step="10"
                   value={settings.maxIntervalMs}
                   onChange={(e) => handleUpdateSetting('maxIntervalMs', Number(e.target.value))}
                   className="w-full cursor-pointer"
                 />
                 <div className="flex justify-between text-[10px] text-slate-400">
-                  <span>Très strict (40ms)</span>
-                  <span>Standard (100ms)</span>
-                  <span>Très tolérant (160ms)</span>
+                  <span>Très rapide (50ms)</span>
+                  <span>Standard (180ms)</span>
+                  <span>Haute tolérance (250ms)</span>
                 </div>
               </div>
             </div>
           )}
 
-          {/* TAB 4: GUIDE */}
+          {/* TAB 5: GUIDE */}
           {activeTab === 'guide' && (
             <div className="space-y-3.5 text-xs text-slate-700">
               <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
@@ -590,7 +817,7 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
                   <span>Comment fonctionne une douchette USB ?</span>
                 </h4>
                 <p className="text-slate-600 leading-relaxed text-[11.5px]">
-                  Un lecteur de code-barres USB standard est reconnu par Windows/Mac/Linux comme un <strong>clavier externe ultra-rapide</strong>. Quand vous tirez sur un code-barres, il tape les chiffres à toute vitesse (environ 10 à 30 millisecondes par chiffre). BizPilot reconnaît cette cadence surhumaine et ajoute l'article en caisse.
+                  Un lecteur de code-barres USB standard est reconnu par Windows/Mac/Linux comme un <strong>clavier externe ultra-rapide</strong>. Quand vous tirez sur un code-barres, il tape les caractères à toute vitesse (environ 10 à 60 millisecondes par chiffre). BizPilot reconnaît cette cadence surhumaine et ajoute l'article en caisse.
                 </p>
               </div>
 
@@ -599,15 +826,18 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
                   <AlertTriangle className="h-4 w-4 text-amber-600" />
                   <span>Points de vérification si le scanner ne réagit pas :</span>
                 </h4>
-                <ul className="list-disc pl-4 space-y-1 text-[11px] text-amber-800">
+                <ul className="list-disc pl-4 space-y-1.5 text-[11px] text-amber-800">
                   <li>
                     <strong>Focus de la fenêtre :</strong> Dans le navigateur, si vous avez cliqué sur une autre application ou fenêtre, cliquez une fois au milieu de l'écran pour redonner le focus à BizPilot.
                   </li>
                   <li>
-                    <strong>Prise USB ou Port :</strong> Testez en branchant directement sur le port USB de l'ordinateur plutôt que sur une rallonge ou un hub sans alimentation.
+                    <strong>Mode Port Série Virtuel vs Clavier :</strong> Si la douchette émet un bip mais n'écrit rien du tout, rendez-vous dans l'onglet <strong>« Codes de Réglage Douchette »</strong> ci-dessus et scannez le code <em>« Mode Clavier USB (USB HID) »</em>.
                   </li>
                   <li>
-                    <strong>Test dans le Bloc-notes (Notepad) :</strong> Ouvrez le Bloc-notes sur votre ordinateur et scannez un code. Si le numéro s'écrit dans le Bloc-notes, votre scanner fonctionne parfaitement et BizPilot l'interceptera !
+                    <strong>Test dans le Bloc-notes (Notepad) :</strong> Ouvrez le Bloc-notes de Windows ou un traitement de texte et scannez un code. Si le numéro s'écrit dans le Bloc-notes, votre matériel fonctionne parfaitement et BizPilot l'interceptera !
+                  </li>
+                  <li>
+                    <strong>Prise USB ou Port :</strong> Branchez directement sur le port USB de l'ordinateur plutôt que sur une rallonge ou un concentrateur sans alimentation.
                   </li>
                 </ul>
               </div>
@@ -615,6 +845,82 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
           )}
 
         </div>
+
+        {/* Modal: Link Scanned Barcode to Existing Product */}
+        {linkingBarcode && (
+          <div className="fixed inset-0 z-60 bg-black/60 backdrop-blur-2xs flex items-center justify-center p-3 animate-in fade-in duration-100">
+            <div className="bg-white rounded-2xl max-w-md w-full p-4 sm:p-5 shadow-2xl border border-slate-200 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <div className="p-2 bg-blue-100 text-blue-700 rounded-xl">
+                    <Link2 className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-extrabold text-sm text-slate-900">Attribuer le code-barres</h4>
+                    <p className="text-[11px] font-mono text-blue-600 font-bold">Code : {linkingBarcode}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLinkingBarcode(null)}
+                  className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {linkSuccessMsg ? (
+                <div className="p-4 bg-emerald-50 border border-emerald-300 rounded-xl text-emerald-900 font-bold text-center text-xs animate-in zoom-in-95">
+                  {linkSuccessMsg}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="relative">
+                    <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Rechercher par modèle ou nom (ex: W572, M255, Robe...)"
+                      value={productSearch}
+                      onChange={(e) => setProductSearch(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      autoFocus
+                    />
+                  </div>
+
+                  <div className="max-h-60 overflow-y-auto space-y-1.5 divide-y divide-slate-100">
+                    {filteredProductsToLink.length === 0 ? (
+                      <div className="p-6 text-center text-xs text-slate-400">
+                        Aucun article trouvé.
+                      </div>
+                    ) : (
+                      filteredProductsToLink.map((p) => (
+                        <div
+                          key={p.id}
+                          className="pt-1.5 flex items-center justify-between hover:bg-slate-50 p-2 rounded-xl transition"
+                        >
+                          <div>
+                            <p className="font-bold text-slate-900 text-xs">{p.name}</p>
+                            <p className="text-[10px] text-slate-400 font-mono">
+                              Réf: {p.sku} • Stock: {p.currentStock} {p.unit}
+                              {p.barcode && <span className="ml-1 text-amber-600">(Actuel: {p.barcode})</span>}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleAssignBarcodeToProduct(p, linkingBarcode)}
+                            className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition shadow-2xs cursor-pointer shrink-0"
+                          >
+                            Attribuer
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs shrink-0">

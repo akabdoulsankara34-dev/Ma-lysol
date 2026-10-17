@@ -37,7 +37,9 @@ import {
   RotateCcw,
   ArrowLeft,
   Keyboard,
-  CheckCircle2
+  CheckCircle2,
+  Barcode,
+  X
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { cashDrawerService } from '../../lib/cashDrawerService';
@@ -63,7 +65,8 @@ export const PosView: React.FC = () => {
     cancelSale,
     setActiveTab,
     summary,
-    avoirs
+    avoirs,
+    updateProduct
   } = useApp();
 
   const [mobilePosTab, setMobilePosTab] = useState<'catalog' | 'cart'>('catalog');
@@ -73,6 +76,10 @@ export const PosView: React.FC = () => {
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [showUsbScannerModal, setShowUsbScannerModal] = useState(false);
+  const [isWindowFocused, setIsWindowFocused] = useState<boolean>(true);
+  const [lastScanPulse, setLastScanPulse] = useState<number>(0);
+  const [unassignedBarcodeModal, setUnassignedBarcodeModal] = useState<{ code: string; info: LastScanInfo } | null>(null);
+  const [assignSearchTerm, setAssignSearchTerm] = useState<string>('');
   const [scanToast, setScanToast] = useState<{
     type: 'success' | 'warning' | 'error' | 'avoir';
     title: string;
@@ -315,12 +322,22 @@ export const PosView: React.FC = () => {
   };
 
   // --------------------------------------------------------
-  // USB BARCODE SCANNER LISTENER (Émulation Clavier HID)
+  // USB BARCODE SCANNER LISTENER & FOCUS MONITOR
   // --------------------------------------------------------
   useEffect(() => {
     let toastTimeout: ReturnType<typeof setTimeout> | null = null;
 
-    const unsubscribe = usbBarcodeScanner.subscribe((scannedCode, scanInfo) => {
+    const unsubscribeFocus = usbBarcodeScanner.onFocusChange((focused) => {
+      setIsWindowFocused(focused);
+    });
+
+    const unsubscribeRaw = usbBarcodeScanner.subscribeRawKeys(() => {
+      setLastScanPulse(Date.now());
+    });
+
+    const unsubscribeScan = usbBarcodeScanner.subscribe((scannedCode, scanInfo) => {
+      setLastScanPulse(Date.now());
+
       // Look up product by checking all normalized alternatives (raw, AZERTY fixed, code-based, sanitized)
       const match = products.find(p => {
         if (p.archived) return false;
@@ -329,6 +346,8 @@ export const PosView: React.FC = () => {
         const pBar = p.barcode ? p.barcode.toLowerCase().trim() : '';
         const pBarClean = pBar.replace(/[-\s._]/g, '');
         const pBarNorm = p.barcode ? normalizeBarcode(p.barcode).toLowerCase().trim() : '';
+        const pName = p.name.toLowerCase().trim();
+        const pNameClean = pName.replace(/[-\s._]/g, '');
 
         return scanInfo.alternatives.some(alt => {
           const a = alt.toLowerCase().trim();
@@ -337,8 +356,10 @@ export const PosView: React.FC = () => {
             a === pSku ||
             a === pBar ||
             a === pBarNorm ||
+            a === pName ||
             aClean === pSkuClean ||
-            (pBarClean && aClean === pBarClean)
+            (pBarClean && aClean === pBarClean) ||
+            aClean === pNameClean
           );
         });
       });
@@ -395,19 +416,25 @@ export const PosView: React.FC = () => {
       }
 
       // Unrecognized barcode, but scanner was successfully read!
-      usbBarcodeScanner.playError();
+      usbBarcodeScanner.playBeep();
       if (toastTimeout) clearTimeout(toastTimeout);
       setScanToast({
-        type: 'error',
+        type: 'warning',
         title: `Code scanné avec succès : "${scanInfo.decoded}"`,
-        subtitle: `Le lecteur a bien transmis le code (${scanInfo.charCount} car. en ${scanInfo.durationMs}ms, fin: ${scanInfo.terminator}), mais aucun article n'a ce code-barres dans votre catalogue.`,
+        subtitle: `Le lecteur a bien transmis le code (${scanInfo.charCount} car. en ${scanInfo.durationMs}ms). Cliquez pour l'attribuer à un article.`,
         timestamp: Date.now()
       });
       toastTimeout = setTimeout(() => setScanToast(null), 7000);
+
+      // Open unassigned barcode modal so cashier can immediately link it to an article (e.g. W572)
+      setUnassignedBarcodeModal({ code: scannedCode, info: scanInfo });
+      setAssignSearchTerm('');
     });
 
     return () => {
-      unsubscribe();
+      unsubscribeFocus();
+      unsubscribeRaw();
+      unsubscribeScan();
       if (toastTimeout) clearTimeout(toastTimeout);
     };
   }, [products, addToCart, avoirs, business.currency]);
@@ -541,12 +568,38 @@ export const PosView: React.FC = () => {
             <button
               id="btn-usb-scanner-trigger"
               type="button"
-              onClick={() => setShowUsbScannerModal(true)}
-              className="bg-white hover:bg-slate-50 border border-l-0 border-slate-200 rounded-r-xl px-3 flex items-center justify-center space-x-1.5 text-slate-700 hover:text-blue-600 transition shadow-xs cursor-pointer"
-              title="Scanner USB (Douchette Clavier HID) : Détection active. Cliquez pour tester ou configurer."
+              onClick={() => {
+                if (!isWindowFocused) {
+                  usbBarcodeScanner.focusApplication();
+                  setIsWindowFocused(true);
+                } else {
+                  setShowUsbScannerModal(true);
+                }
+              }}
+              className={`border border-l-0 rounded-r-xl px-2.5 sm:px-3 flex items-center justify-center space-x-1.5 transition shadow-xs cursor-pointer ${
+                !isWindowFocused
+                  ? 'bg-amber-100 hover:bg-amber-200 border-amber-300 text-amber-900 animate-pulse'
+                  : Date.now() - lastScanPulse < 1500
+                  ? 'bg-emerald-100 border-emerald-400 text-emerald-900 ring-2 ring-emerald-400/40'
+                  : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700 hover:text-blue-600'
+              }`}
+              title={
+                !isWindowFocused
+                  ? 'Fenêtre en veille : Cliquez ici pour réactiver le scan de votre douchette USB'
+                  : 'Douchette USB prête & active : Cliquez pour ouvrir le diagnostic et les codes de réglage'
+              }
             >
-              <Keyboard className="h-4 w-4 text-slate-500" />
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              <Keyboard className={`h-4 w-4 ${!isWindowFocused ? 'text-amber-600' : 'text-slate-600'}`} />
+              <span className={`w-2 h-2 rounded-full ${
+                !isWindowFocused 
+                  ? 'bg-amber-500 animate-ping' 
+                  : Date.now() - lastScanPulse < 1500 
+                  ? 'bg-emerald-500 scale-125' 
+                  : 'bg-emerald-500 animate-pulse'
+              }`}></span>
+              <span className="hidden md:inline text-[11px] font-bold">
+                {!isWindowFocused ? 'Cliquez pour scanner' : 'Douchette USB'}
+              </span>
             </button>
           </div>
 
@@ -1230,6 +1283,137 @@ export const PosView: React.FC = () => {
                 </p>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* UNASSIGNED BARCODE ATTRIBUTION MODAL */}
+      {unassignedBarcodeModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-2xs flex items-center justify-center p-3 animate-in fade-in duration-100">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-4 sm:p-5 shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] flex flex-col">
+            
+            {/* Header */}
+            <div className="flex items-start justify-between shrink-0">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2.5 bg-emerald-100 text-emerald-700 rounded-xl">
+                  <Barcode className="h-6 w-6" />
+                </div>
+                <div>
+                  <div className="flex items-center space-x-1.5">
+                    <h4 className="font-extrabold text-sm sm:text-base text-slate-900">
+                      Code Détecté par la Douchette USB
+                    </h4>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                      Signal Reçu
+                    </span>
+                  </div>
+                  <p className="text-xs font-mono font-black text-emerald-700 mt-0.5">
+                    Code scanné : {unassignedBarcodeModal.code}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUnassignedBarcodeModal(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Explanation */}
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 shrink-0">
+              💡 <strong>Votre douchette USB fonctionne à 100% !</strong> Ce code-barres n'est pas encore associé à un article de votre boutique. Choisissez ci-dessous à quel modèle ou article l'attribuer :
+            </div>
+
+            {/* Search Input */}
+            <div className="relative shrink-0">
+              <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Rechercher l'article ou le modèle (ex: W572, M255, Robe...)"
+                value={assignSearchTerm}
+                onChange={(e) => setAssignSearchTerm(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                autoFocus
+              />
+            </div>
+
+            {/* Products List */}
+            <div className="flex-1 overflow-y-auto space-y-1.5 divide-y divide-slate-100 min-h-[160px]">
+              {products
+                .filter(p => !p.archived)
+                .filter(p => {
+                  if (!assignSearchTerm.trim()) return true;
+                  const term = assignSearchTerm.toLowerCase().trim();
+                  return (
+                    p.name.toLowerCase().includes(term) ||
+                    p.sku.toLowerCase().includes(term) ||
+                    (p.category && p.category.toLowerCase().includes(term))
+                  );
+                })
+                .slice(0, 15)
+                .map((p) => (
+                  <div
+                    key={p.id}
+                    className="pt-2 flex items-center justify-between hover:bg-slate-50 p-2.5 rounded-xl transition"
+                  >
+                    <div className="min-w-0 pr-2">
+                      <p className="font-bold text-slate-900 text-xs sm:text-sm truncate">{p.name}</p>
+                      <p className="text-[11px] text-slate-500 font-mono">
+                        Réf: {p.sku} • Prix: {p.salePrice.toLocaleString('fr-FR')} {business.currency} • Stock: {p.currentStock} {p.unit}
+                        {p.barcode && <span className="ml-1 text-amber-600 font-sans">(Code actuel: {p.barcode})</span>}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await updateProduct(p.id, { barcode: unassignedBarcodeModal.code });
+                          if (p.currentStock > 0) {
+                            addToCart(p, 1);
+                          }
+                          usbBarcodeScanner.playBeep();
+                          setScanToast({
+                            type: 'success',
+                            title: `Code attribué à ${p.name}`,
+                            subtitle: `Le code ${unassignedBarcodeModal.code} est enregistré. ${p.currentStock > 0 ? '+1 ajouté au panier !' : ''}`,
+                            timestamp: Date.now()
+                          });
+                          setUnassignedBarcodeModal(null);
+                        } catch (err) {
+                          console.error('Erreur attribution code-barres:', err);
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-xs flex items-center space-x-1 shrink-0 cursor-pointer"
+                    >
+                      <span>Lier & Ajouter</span>
+                    </button>
+                  </div>
+                ))}
+            </div>
+
+            {/* Footer */}
+            <div className="pt-2 border-t border-slate-200 flex items-center justify-between shrink-0 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setUnassignedBarcodeModal(null);
+                  setActiveTab('products');
+                }}
+                className="text-blue-600 hover:text-blue-800 font-bold flex items-center space-x-1 cursor-pointer"
+              >
+                <span>+ Créer un nouvel article avec ce code</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setUnassignedBarcodeModal(null)}
+                className="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl cursor-pointer"
+              >
+                Fermer
+              </button>
+            </div>
+
           </div>
         </div>
       )}

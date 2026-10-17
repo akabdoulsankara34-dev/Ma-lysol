@@ -13,6 +13,7 @@ import {
   Maximize2
 } from 'lucide-react';
 import { Product } from '../../types';
+import { generateCode128Svg } from '../../lib/barcodeGenerator';
 
 export const BarcodeLabelsView: React.FC = () => {
   const { products, business } = useApp();
@@ -306,25 +307,20 @@ export const BarcodeLabelsView: React.FC = () => {
                     {prod.name}
                   </div>
 
-                  {/* Pseudo Barcode Representation */}
+                  {/* Real Scannable Vector Code 128 Barcode */}
                   <div className="my-1 flex flex-col items-center justify-center">
-                    <div className="flex items-center justify-center gap-[2px] h-9 w-full max-w-[150px] bg-slate-100 p-1 rounded-sm">
-                      {Array.from({ length: 28 }).map((_, i) => (
-                        <div
-                          key={i}
-                          className={`h-full ${
-                            (i * 7 + index) % 3 === 0 
-                              ? 'w-1 bg-slate-900' 
-                              : (i * 3 + index) % 2 === 0 
-                              ? 'w-[1.5px] bg-slate-900' 
-                              : 'w-[0.5px] bg-slate-900'
-                          }`}
-                        />
-                      ))}
-                    </div>
-                    <div className="font-mono text-[9px] font-bold text-slate-700 tracking-widest mt-0.5">
-                      {barcodeValue}
-                    </div>
+                    <div 
+                      className="w-full max-w-[170px] h-10 flex items-center justify-center overflow-hidden"
+                      dangerouslySetInnerHTML={{
+                        __html: generateCode128Svg(barcodeValue, {
+                          height: 38,
+                          showText: true,
+                          fontSize: 9,
+                          barColor: '#000000',
+                          bgColor: 'transparent'
+                        })
+                      }}
+                    />
                   </div>
 
                   {showPrice && (

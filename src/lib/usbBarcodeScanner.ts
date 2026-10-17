@@ -39,10 +39,10 @@ const DEFAULT_SETTINGS: UsbScannerSettings = {
   enableSound: true,
   azertyAutoFix: true,
   autoAddToCart: true,
-  maxIntervalMs: 100, // 100ms threshold per key (tolerant to USB hubs, Bluetooth and older hardware)
+  maxIntervalMs: 180, // Generous 180ms threshold (supports USB hubs, Bluetooth, 2.4G dongles, Netum, Tera)
   minBarcodeLength: 3,
   autoSubmitOnTimeout: true, // Automatically commit scan if scanner has NO Enter suffix
-  suffixTimeoutMs: 120, // 120ms of silence after a burst of keys = scan complete
+  suffixTimeoutMs: 280, // 280ms pause after a burst of keys = scan complete
 };
 
 // Map French AZERTY top row characters to digits 0-9
@@ -130,7 +130,7 @@ export function generateBarcodeAlternatives(raw: string, codeBased = ''): string
   }
 
   // EAN-13 vs UPC-A: 12-digit code with leading zero
-  Array.from(alts).forEach(val => {
+  Array.from(alts).forEach((val) => {
     if (/^\d{12}$/.test(val)) {
       alts.add('0' + val);
     } else if (/^0\d{12}$/.test(val)) {
@@ -143,17 +143,21 @@ export function generateBarcodeAlternatives(raw: string, codeBased = ''): string
 
 type ScanCallback = (barcode: string, scanInfo: LastScanInfo) => void;
 type RawKeyCallback = (event: RawKeyStrokeEvent) => void;
+type FocusCallback = (isFocused: boolean) => void;
 
 class UsbBarcodeScannerService {
   private settings: UsbScannerSettings;
   private listeners: Set<ScanCallback> = new Set();
   private rawKeyListeners: Set<RawKeyCallback> = new Set();
-  
+  private focusListeners: Set<FocusCallback> = new Set();
+
   private keyBuffer: { key: string; code: string; time: number }[] = [];
   private autoSubmitTimer: ReturnType<typeof setTimeout> | null = null;
   private bufferExpiryTimer: ReturnType<typeof setTimeout> | null = null;
   private lastScanInfo: LastScanInfo | null = null;
+  private lastEnterTimestamp = 0;
   private isInitialized = false;
+  private windowFocused = true;
 
   constructor() {
     this.settings = this.loadSettings();
@@ -187,6 +191,43 @@ class UsbBarcodeScannerService {
 
   public getLastScanInfo(): LastScanInfo | null {
     return this.lastScanInfo;
+  }
+
+  public isWindowFocused(): boolean {
+    if (typeof document !== 'undefined') {
+      return document.hasFocus();
+    }
+    return this.windowFocused;
+  }
+
+  public focusApplication() {
+    if (typeof window !== 'undefined') {
+      try {
+        window.focus();
+        document.body?.focus();
+      } catch {}
+      this.setWindowFocused(true);
+    }
+  }
+
+  public onFocusChange(callback: FocusCallback): () => void {
+    this.focusListeners.add(callback);
+    // Emit immediate current state
+    callback(this.isWindowFocused());
+    return () => {
+      this.focusListeners.delete(callback);
+    };
+  }
+
+  private setWindowFocused(focused: boolean) {
+    if (this.windowFocused !== focused) {
+      this.windowFocused = focused;
+      this.focusListeners.forEach((cb) => {
+        try {
+          cb(focused);
+        } catch {}
+      });
+    }
   }
 
   public subscribe(callback: ScanCallback): () => void {
@@ -237,8 +278,20 @@ class UsbBarcodeScannerService {
     if (this.isInitialized) return;
     this.isInitialized = true;
 
-    // Use capture phase to intercept scanner keys before inputs consume them
-    window.addEventListener('keydown', this.handleKeyDown, true);
+    // Use capture phase on BOTH window and document to intercept scanner keys before inputs consume them
+    window.addEventListener('keydown', this.handleKeyDown, { capture: true, passive: false });
+    document.addEventListener('keydown', this.handleKeyDown, { capture: true, passive: false });
+
+    // Window focus tracking
+    window.addEventListener('focus', () => this.setWindowFocused(true));
+    window.addEventListener('blur', () => this.setWindowFocused(false));
+    document.addEventListener('visibilitychange', () => {
+      this.setWindowFocused(!document.hidden && document.hasFocus());
+    });
+    // On click anywhere in the window, restore active focus
+    window.addEventListener('click', () => {
+      this.setWindowFocused(true);
+    }, { passive: true });
   }
 
   private commitScan = (terminator: 'enter' | 'tab' | 'timeout' | 'manual', originatingEvent?: KeyboardEvent) => {
@@ -268,10 +321,10 @@ class UsbBarcodeScannerService {
       : 0;
 
     // Check if the sequence looks like a hardware scanner:
-    // Either average interval is below maxIntervalMs OR at least 70% of intervals are fast (< maxIntervalMs * 1.5)
-    const fastIntervalsCount = intervals.filter(d => d <= this.settings.maxIntervalMs * 1.4).length;
-    const isFastRatio = intervals.length > 0 ? (fastIntervalsCount / intervals.length) >= 0.7 : true;
-    const isKeyboardWedge = avgInterval <= this.settings.maxIntervalMs || (isFastRatio && avgInterval <= 140);
+    // With maxIntervalMs = 180, hardware scanners (10-150ms/key) will pass reliably.
+    const fastIntervalsCount = intervals.filter(d => d <= this.settings.maxIntervalMs * 1.5).length;
+    const isFastRatio = intervals.length > 0 ? (fastIntervalsCount / intervals.length) >= 0.6 : true;
+    const isKeyboardWedge = avgInterval <= this.settings.maxIntervalMs || (isFastRatio && avgInterval <= 220);
 
     // Build raw & code-based strings
     let rawBarcode = '';
@@ -283,6 +336,8 @@ class UsbBarcodeScannerService {
         codeBasedBarcode += item.code.replace('Digit', '');
       } else if (item.code.startsWith('Numpad')) {
         codeBasedBarcode += item.code.replace('Numpad', '');
+      } else if (item.code.startsWith('Key')) {
+        codeBasedBarcode += item.code.replace('Key', '');
       } else {
         codeBasedBarcode += item.key;
       }
@@ -312,18 +367,18 @@ class UsbBarcodeScannerService {
       alternatives,
     };
 
-    // If it's a scanner sequence or terminating key was Enter/Tab:
-    if (isKeyboardWedge || terminator === 'enter' || terminator === 'tab') {
+    // If it's a hardware scanner burst OR terminated with Enter/Tab:
+    // Even on timeout, if >= minBarcodeLength keys arrived, treat as valid scan!
+    if (isKeyboardWedge || terminator === 'enter' || terminator === 'tab' || (terminator === 'timeout' && this.keyBuffer.length >= 3)) {
       if (originatingEvent) {
         originatingEvent.preventDefault();
         originatingEvent.stopPropagation();
       }
 
-      // Check if target is an input
+      // Check if target is an input and clean it up so barcode doesn't pollute the field
       const target = (originatingEvent?.target || document.activeElement) as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
         const inputElem = target as HTMLInputElement;
-        // If input contains the barcode or parts of it, clean it up so it doesn't pollute the field
         if (
           inputElem.id === 'input-search-product' ||
           inputElem.value.includes(rawBarcode) ||
@@ -350,7 +405,7 @@ class UsbBarcodeScannerService {
       return;
     }
 
-    // Otherwise it was human typing that reached Enter or timed out, reset buffer
+    // Otherwise it was slow human typing that timed out, reset buffer
     this.keyBuffer = [];
   };
 
@@ -363,18 +418,30 @@ class UsbBarcodeScannerService {
     }
 
     const now = performance.now();
+
+    // Check for Enter key across all browser/OS quirks (including carriage return \r and linefeed \n)
     const isEnterKey = 
       e.key === 'Enter' || 
       e.key === 'Return' || 
       e.key === '\r' || 
       e.key === '\n' || 
       e.code === 'Enter' || 
-      e.code === 'NumpadEnter';
+      e.code === 'NumpadEnter' ||
+      e.keyCode === 13 ||
+      e.which === 13;
 
-    const isTabKey = e.key === 'Tab';
+    // Prevent duplicate consecutive \n if scanner sends \r\n (CR+LF)
+    if (isEnterKey && now - this.lastEnterTimestamp < 60) {
+      if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
+    const isTabKey = e.key === 'Tab' || e.code === 'Tab' || e.keyCode === 9 || e.which === 9;
 
     // 1. Scanner Suffix: Enter or Tab
     if (isEnterKey || isTabKey) {
+      this.lastEnterTimestamp = now;
       if (this.keyBuffer.length >= this.settings.minBarcodeLength) {
         this.commitScan(isEnterKey ? 'enter' : 'tab', e);
         return;
@@ -386,22 +453,39 @@ class UsbBarcodeScannerService {
       return;
     }
 
-    // 2. Printable single character
-    if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    // 2. Printable character extraction (handles both e.key and fallback e.code)
+    let charToRecord = '';
+    if (e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+      charToRecord = e.key;
+    } else if (e.code) {
+      if (e.code.startsWith('Digit')) {
+        charToRecord = e.code.replace('Digit', '');
+      } else if (e.code.startsWith('Numpad') && e.code.length === 7) {
+        charToRecord = e.code.replace('Numpad', '');
+      } else if (e.code.startsWith('Key')) {
+        charToRecord = e.code.replace('Key', '').toLowerCase();
+      } else if (e.code === 'Minus') {
+        charToRecord = '-';
+      } else if (e.code === 'Slash') {
+        charToRecord = '/';
+      }
+    }
+
+    if (charToRecord) {
       let intervalWithLast = 0;
       if (this.keyBuffer.length > 0) {
         const lastKey = this.keyBuffer[this.keyBuffer.length - 1];
         intervalWithLast = now - lastKey.time;
 
-        // If pause is very long (> 400ms), it's likely a new scan or new human typing
-        if (intervalWithLast > Math.max(350, this.settings.maxIntervalMs * 3.5)) {
+        // If pause is very long (> 500ms), it's a new scan
+        if (intervalWithLast > Math.max(450, this.settings.maxIntervalMs * 3.5)) {
           this.keyBuffer = [];
         }
       }
 
       this.keyBuffer.push({
-        key: e.key,
-        code: e.code,
+        key: charToRecord,
+        code: e.code || '',
         time: now,
       });
 
@@ -409,8 +493,8 @@ class UsbBarcodeScannerService {
       const currentRawString = this.keyBuffer.map(k => k.key).join('');
       if (this.rawKeyListeners.size > 0) {
         const rawEvent: RawKeyStrokeEvent = {
-          key: e.key,
-          code: e.code,
+          key: charToRecord,
+          code: e.code || '',
           intervalMs: Math.round(intervalWithLast * 10) / 10,
           timestamp: Date.now(),
           currentBuffer: currentRawString,
@@ -434,7 +518,7 @@ class UsbBarcodeScannerService {
       if (this.bufferExpiryTimer) clearTimeout(this.bufferExpiryTimer);
       this.bufferExpiryTimer = setTimeout(() => {
         this.keyBuffer = [];
-      }, 500);
+      }, 700);
     }
   };
 
