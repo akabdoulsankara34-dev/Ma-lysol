@@ -478,7 +478,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, business, onCl
                   <div className="pr-2">
                     <p className="font-extrabold text-black">{item.productName}</p>
                     <p className="text-[11px] font-bold text-slate-900">
-                      {item.quantity} x {item.unitPrice.toLocaleString('fr-FR')} {business.currency}
+                      {item.quantity} {item.unit ? `(${item.unit}) ` : ''}x {item.unitPrice.toLocaleString('fr-FR')} {business.currency}
                     </p>
                   </div>
                   <span className="font-black text-black whitespace-nowrap text-right">

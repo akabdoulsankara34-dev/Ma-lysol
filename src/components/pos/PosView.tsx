@@ -321,23 +321,26 @@ export const PosView: React.FC = () => {
     let toastTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const unsubscribe = usbBarcodeScanner.subscribe((scannedCode, scanInfo) => {
-      const codeClean = scannedCode.trim().toLowerCase();
-      const rawClean = scanInfo.raw.trim().toLowerCase();
-
-      // Look up product by SKU, barcode, or normalized code
+      // Look up product by checking all normalized alternatives (raw, AZERTY fixed, code-based, sanitized)
       const match = products.find(p => {
         if (p.archived) return false;
-        const pSku = p.sku.toLowerCase();
-        const pBar = p.barcode ? p.barcode.toLowerCase() : '';
-        const pBarNorm = p.barcode ? normalizeBarcode(p.barcode).toLowerCase() : '';
+        const pSku = p.sku.toLowerCase().trim();
+        const pSkuClean = pSku.replace(/[-\s._]/g, '');
+        const pBar = p.barcode ? p.barcode.toLowerCase().trim() : '';
+        const pBarClean = pBar.replace(/[-\s._]/g, '');
+        const pBarNorm = p.barcode ? normalizeBarcode(p.barcode).toLowerCase().trim() : '';
 
-        return (
-          pSku === codeClean ||
-          pBar === codeClean ||
-          pBarNorm === codeClean ||
-          pSku === rawClean ||
-          pBar === rawClean
-        );
+        return scanInfo.alternatives.some(alt => {
+          const a = alt.toLowerCase().trim();
+          const aClean = a.replace(/[-\s._]/g, '');
+          return (
+            a === pSku ||
+            a === pBar ||
+            a === pBarNorm ||
+            aClean === pSkuClean ||
+            (pBarClean && aClean === pBarClean)
+          );
+        });
       });
 
       if (match) {
@@ -370,9 +373,12 @@ export const PosView: React.FC = () => {
 
       // Check if the scanned barcode corresponds to a Bon d'Avoir
       const foundAvoir = avoirs.find(a => {
-        const num = a.numero.toLowerCase();
-        const numClean = num.replace(/-/g, '');
-        return num === codeClean || numClean === codeClean || num === rawClean;
+        const num = a.numero.toLowerCase().trim();
+        const numClean = num.replace(/[-\s._]/g, '');
+        return scanInfo.alternatives.some(alt => {
+          const clean = alt.toLowerCase().trim().replace(/[-\s._]/g, '');
+          return alt.toLowerCase().trim() === num || clean === numClean;
+        });
       });
 
       if (foundAvoir) {
@@ -388,16 +394,16 @@ export const PosView: React.FC = () => {
         return;
       }
 
-      // Unrecognized barcode
+      // Unrecognized barcode, but scanner was successfully read!
       usbBarcodeScanner.playError();
       if (toastTimeout) clearTimeout(toastTimeout);
       setScanToast({
         type: 'error',
-        title: `Code-barres inconnu : "${scanInfo.decoded}"`,
-        subtitle: `Aucun article ne correspond à ce code dans votre catalogue. Vérifiez la référence ou ajoutez-le dans Catalogue.`,
+        title: `Code scanné avec succès : "${scanInfo.decoded}"`,
+        subtitle: `Le lecteur a bien transmis le code (${scanInfo.charCount} car. en ${scanInfo.durationMs}ms, fin: ${scanInfo.terminator}), mais aucun article n'a ce code-barres dans votre catalogue.`,
         timestamp: Date.now()
       });
-      toastTimeout = setTimeout(() => setScanToast(null), 5000);
+      toastTimeout = setTimeout(() => setScanToast(null), 7000);
     });
 
     return () => {
@@ -466,24 +472,47 @@ export const PosView: React.FC = () => {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && searchQuery.trim() !== '') {
                     const searchLower = searchQuery.trim().toLowerCase();
-                    const normalized = normalizeBarcode(searchLower);
+                    const alts = [searchLower, normalizeBarcode(searchLower).toLowerCase(), searchLower.replace(/[-\s._]/g, '')];
+                    
                     const exactSkuMatch = products.find(
                       p => !p.archived && (
-                        p.sku.toLowerCase() === searchLower || 
-                        p.barcode?.toLowerCase() === searchLower ||
-                        p.sku.toLowerCase() === normalized ||
-                        p.barcode?.toLowerCase() === normalized
+                        alts.includes(p.sku.toLowerCase().trim()) || 
+                        (p.barcode && alts.includes(p.barcode.toLowerCase().trim())) ||
+                        alts.includes(p.sku.toLowerCase().replace(/[-\s._]/g, '')) ||
+                        (p.barcode && alts.includes(p.barcode.toLowerCase().replace(/[-\s._]/g, '')))
                       )
                     );
                     
-                    if (exactSkuMatch && exactSkuMatch.currentStock > 0) {
-                      addToCart(exactSkuMatch, 1);
-                      usbBarcodeScanner.playBeep();
-                      setSearchQuery('');
+                    if (exactSkuMatch) {
+                      if (exactSkuMatch.currentStock > 0) {
+                        addToCart(exactSkuMatch, 1);
+                        usbBarcodeScanner.playBeep();
+                        setSearchQuery('');
+                        setScanToast({
+                          type: 'success',
+                          title: exactSkuMatch.name,
+                          subtitle: `+1 ajouté au panier (${exactSkuMatch.salePrice.toLocaleString('fr-FR')} ${business.currency})`,
+                          timestamp: Date.now()
+                        });
+                      } else {
+                        usbBarcodeScanner.playError();
+                        setScanToast({
+                          type: 'warning',
+                          title: `Stock épuisé : ${exactSkuMatch.name}`,
+                          subtitle: `Stock actuel : 0 ${exactSkuMatch.unit}`,
+                          timestamp: Date.now()
+                        });
+                      }
                     } else if (filteredProducts.length === 1 && filteredProducts[0].currentStock > 0) {
                       addToCart(filteredProducts[0], 1);
                       usbBarcodeScanner.playBeep();
                       setSearchQuery('');
+                      setScanToast({
+                        type: 'success',
+                        title: filteredProducts[0].name,
+                        subtitle: `+1 ajouté au panier (${filteredProducts[0].salePrice.toLocaleString('fr-FR')} ${business.currency})`,
+                        timestamp: Date.now()
+                      });
                     }
                   }
                 }}

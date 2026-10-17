@@ -113,6 +113,7 @@ export interface SaleItem {
   purchasePrice: number;
   subtotal: number;
   totalCost: number;
+  unit?: string;
 }
 
 export interface Sale {

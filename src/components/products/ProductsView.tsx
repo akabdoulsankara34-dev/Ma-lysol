@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Product } from '../../types';
 import { BarcodeScanner } from '../BarcodeScanner';
+import { usbBarcodeScanner } from '../../lib/usbBarcodeScanner';
 import { 
   Search, 
   Plus, 
@@ -17,8 +18,44 @@ import {
   Save, 
   ArrowUpDown,
   DollarSign,
-  ScanBarcode
+  ScanBarcode,
+  Barcode
 } from 'lucide-react';
+
+export const PRESET_UNITS = [
+  'Pièce',
+  'Sac',
+  'Carton',
+  'Bidon',
+  'Bouteille',
+  'Paquet',
+  'Sachet',
+  'Kg',
+  'Litre',
+  'Flacon',
+  'Boîte',
+  'Plaquette',
+  'Tube',
+  'Paire',
+  'Rouleau',
+  'Mètre',
+  'Lot',
+];
+
+export const CUSTOM_UNIT_SUGGESTIONS = [
+  'Gélule',
+  'Ampoule',
+  'Dose',
+  'Barre',
+  'Fagot',
+  'Ramette',
+  'Botte',
+  'Liasse',
+  'Demi-carton',
+  'Boîte de 10',
+  'Centimètre',
+  'Gramme',
+];
 
 export const ProductsView: React.FC = () => {
   const { products, addProduct, updateProduct, archiveProduct, business, currentUser, recordStockMovement } = useApp();
@@ -37,8 +74,10 @@ export const ProductsView: React.FC = () => {
   // Form State
   const [formName, setFormName] = useState('');
   const [formSku, setFormSku] = useState('');
+  const [formBarcode, setFormBarcode] = useState('');
   const [formCategory, setFormCategory] = useState('Épicerie');
-  const [formUnit, setFormUnit] = useState('Pièce');
+  const [formUnitSelect, setFormUnitSelect] = useState('Pièce');
+  const [formCustomUnit, setFormCustomUnit] = useState('');
   const [formPurchasePrice, setFormPurchasePrice] = useState<number>(0);
   const [formSalePrice, setFormSalePrice] = useState<number>(0);
   const [formWholesalePrice, setFormWholesalePrice] = useState<number>(0);
@@ -50,6 +89,23 @@ export const ProductsView: React.FC = () => {
   // Scanner State
   const [showScanner, setShowScanner] = useState(false);
   const [scannerTarget, setScannerTarget] = useState<'search' | 'form'>('search');
+
+  // USB Barcode Scanner listener on Products / Catalog page
+  useEffect(() => {
+    const unsubscribe = usbBarcodeScanner.subscribe((scannedCode) => {
+      usbBarcodeScanner.playBeep();
+      if (showModal) {
+        setFormBarcode(scannedCode);
+        setFormSku(prev => !prev || prev.startsWith('ART-') ? scannedCode : prev);
+      } else {
+        setSearchQuery(scannedCode);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [showModal]);
 
   // Quick Restock Modal
   const [restockProduct, setRestockProduct] = useState<Product | null>(null);
@@ -65,13 +121,26 @@ export const ProductsView: React.FC = () => {
     return ['Tous', ...Array.from(set)];
   }, [products]);
 
+  // Extract existing custom units already used in store
+  const existingCustomUnits = useMemo(() => {
+    const set = new Set<string>();
+    products.forEach(p => {
+      if (p.unit && !PRESET_UNITS.includes(p.unit) && p.unit.toLowerCase() !== 'autre') {
+        set.add(p.unit);
+      }
+    });
+    return Array.from(set);
+  }, [products]);
+
   // Open modal for new
   const handleOpenAdd = () => {
     setEditingProduct(null);
     setFormName('');
     setFormSku(`ART-${Math.floor(1000 + Math.random() * 9000)}`);
+    setFormBarcode('');
     setFormCategory('Épicerie');
-    setFormUnit('Pièce');
+    setFormUnitSelect('Pièce');
+    setFormCustomUnit('');
     setFormPurchasePrice(500);
     setFormSalePrice(700);
     setFormWholesalePrice(600);
@@ -87,8 +156,19 @@ export const ProductsView: React.FC = () => {
     setEditingProduct(p);
     setFormName(p.name);
     setFormSku(p.sku);
+    setFormBarcode(p.barcode || '');
     setFormCategory(p.category);
-    setFormUnit(p.unit);
+    
+    // Check if unit is in standard preset or existing catalog units
+    const currentUnit = p.unit || 'Pièce';
+    if (PRESET_UNITS.includes(currentUnit) || existingCustomUnits.includes(currentUnit)) {
+      setFormUnitSelect(currentUnit);
+      setFormCustomUnit('');
+    } else {
+      setFormUnitSelect('Autre');
+      setFormCustomUnit(currentUnit === 'Autre' ? '' : currentUnit);
+    }
+
     setFormPurchasePrice(p.purchasePrice);
     setFormSalePrice(p.salePrice);
     setFormWholesalePrice(p.wholesalePrice || p.salePrice);
@@ -103,12 +183,18 @@ export const ProductsView: React.FC = () => {
     e.preventDefault();
     if (!formName.trim() || formSalePrice <= 0) return;
 
+    // Resolve final unit (preset, existing custom, or user-defined custom unit)
+    const finalUnit = formUnitSelect === 'Autre'
+      ? (formCustomUnit.trim() || 'Autre')
+      : formUnitSelect;
+
     if (editingProduct) {
       await updateProduct(editingProduct.id, {
         name: formName.trim(),
         sku: formSku.trim(),
+        barcode: formBarcode.trim() || undefined,
         category: formCategory,
-        unit: formUnit,
+        unit: finalUnit,
         purchasePrice: Number(formPurchasePrice),
         salePrice: Number(formSalePrice),
         wholesalePrice: Number(formWholesalePrice) || undefined,
@@ -120,8 +206,9 @@ export const ProductsView: React.FC = () => {
       await addProduct({
         name: formName.trim(),
         sku: formSku.trim(),
+        barcode: formBarcode.trim() || undefined,
         category: formCategory,
-        unit: formUnit,
+        unit: finalUnit,
         purchasePrice: Number(formPurchasePrice),
         salePrice: Number(formSalePrice),
         wholesalePrice: Number(formWholesalePrice) || undefined,
@@ -464,15 +551,29 @@ export const ProductsView: React.FC = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Référence / Code SKU</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Référence / SKU</label>
+                  <input
+                    type="text"
+                    value={formSku}
+                    onChange={(e) => setFormSku(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800"
+                    placeholder="Ex: ART-1001"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
+                    <span>Code-barres</span>
+                    <span className="text-[10px] text-blue-600 font-normal">Douchette USB auto</span>
+                  </label>
                   <div className="flex">
                     <input
                       type="text"
-                      value={formSku}
-                      onChange={(e) => setFormSku(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-l-xl px-3 py-2 text-xs text-slate-800"
+                      value={formBarcode}
+                      onChange={(e) => setFormBarcode(e.target.value)}
+                      placeholder="Scannez ou tapez..."
+                      className="w-full bg-slate-50 border border-slate-300 rounded-l-xl px-3 py-2 text-xs text-slate-800 font-mono"
                     />
                     <button
                       type="button"
@@ -480,7 +581,8 @@ export const ProductsView: React.FC = () => {
                         setScannerTarget('form');
                         setShowScanner(true);
                       }}
-                      className="bg-slate-200 hover:bg-slate-300 px-3 border border-l-0 border-slate-300 rounded-r-xl transition flex items-center justify-center text-slate-700"
+                      className="bg-slate-200 hover:bg-slate-300 px-2.5 border border-l-0 border-slate-300 rounded-r-xl transition flex items-center justify-center text-slate-700 cursor-pointer"
+                      title="Scanner avec la caméra"
                     >
                       <ScanBarcode className="h-4 w-4" />
                     </button>
@@ -500,21 +602,46 @@ export const ProductsView: React.FC = () => {
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Unité</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700">Unité</label>
+                    {formUnitSelect === 'Autre' && (
+                      <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.2 rounded">
+                        Personnalisée
+                      </span>
+                    )}
+                  </div>
                   <select
-                    value={formUnit}
-                    onChange={(e) => setFormUnit(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-2 text-xs text-slate-800"
+                    value={formUnitSelect}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setFormUnitSelect(val);
+                      if (val !== 'Autre') {
+                        setFormCustomUnit('');
+                      }
+                    }}
+                    className={`w-full border rounded-xl px-2.5 py-2 text-xs font-semibold transition ${
+                      formUnitSelect === 'Autre'
+                        ? 'bg-amber-50/70 border-amber-300 text-amber-950 focus:border-amber-500 focus:ring-1 focus:ring-amber-500'
+                        : 'bg-slate-50 border-slate-300 text-slate-800 focus:bg-white focus:border-blue-500'
+                    }`}
                   >
-                    <option value="Pièce">Pièce</option>
-                    <option value="Sac">Sac</option>
-                    <option value="Carton">Carton</option>
-                    <option value="Bidon">Bidon</option>
-                    <option value="Bouteille">Bouteille</option>
-                    <option value="Paquet">Paquet</option>
-                    <option value="Sachet">Sachet</option>
-                    <option value="Kg">Kg</option>
-                    <option value="Litre">Litre</option>
+                    <optgroup label="Unités standards">
+                      {PRESET_UNITS.map(u => (
+                        <option key={u} value={u}>{u}</option>
+                      ))}
+                    </optgroup>
+
+                    {existingCustomUnits.length > 0 && (
+                      <optgroup label="Unités déjà enregistrées dans votre boutique">
+                        {existingCustomUnits.map(u => (
+                          <option key={u} value={u}>{u}</option>
+                        ))}
+                      </optgroup>
+                    )}
+
+                    <optgroup label="Autre type d'article">
+                      <option value="Autre">✨ Autre (préciser l'unité)...</option>
+                    </optgroup>
                   </select>
                 </div>
                 <div>
@@ -539,6 +666,52 @@ export const ProductsView: React.FC = () => {
                   />
                 </div>
               </div>
+
+              {/* Carte de saisie de l'unité personnalisée si "Autre" est sélectionné */}
+              {formUnitSelect === 'Autre' && (
+                <div className="bg-gradient-to-r from-amber-50 to-orange-50/80 border border-amber-200 rounded-xl p-3 space-y-2 shadow-xs">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-black text-amber-950 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                      Préciser le type d'unité personnalisée
+                      <span className="text-red-500">*</span>
+                    </label>
+                    <span className="text-[11px] font-mono text-amber-900 bg-amber-200/70 px-2 py-0.5 rounded-md font-bold">
+                      Aperçu : {formCurrentStock || 0} {formCustomUnit.trim() || 'Autre'}
+                    </span>
+                  </div>
+
+                  <input
+                    type="text"
+                    required
+                    value={formCustomUnit}
+                    onChange={(e) => setFormCustomUnit(e.target.value)}
+                    placeholder="Ex: Boîte de 10, Flacon 250ml, Ampoule, Rame, Dose, Gélule, Barre..."
+                    className="w-full bg-white border border-amber-300 focus:border-amber-500 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+                    autoFocus
+                  />
+
+                  <div>
+                    <p className="text-[10px] text-slate-500 font-medium mb-1">Suggestions rapides (cliquez pour appliquer) :</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {CUSTOM_UNIT_SUGGESTIONS.map((sugg) => (
+                        <button
+                          key={sugg}
+                          type="button"
+                          onClick={() => setFormCustomUnit(sugg)}
+                          className={`text-[11px] px-2.5 py-0.5 rounded-lg border font-medium transition ${
+                            formCustomUnit.trim().toLowerCase() === sugg.toLowerCase()
+                              ? 'bg-amber-600 text-white border-amber-600 font-bold shadow-xs'
+                              : 'bg-white text-slate-700 border-amber-200 hover:border-amber-400 hover:bg-amber-100/50'
+                          }`}
+                        >
+                          + {sugg}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
@@ -701,7 +874,8 @@ export const ProductsView: React.FC = () => {
             if (scannerTarget === 'search') {
               setSearchQuery(decodedText);
             } else if (scannerTarget === 'form') {
-              setFormSku(decodedText);
+              setFormBarcode(decodedText);
+              setFormSku(prev => !prev || prev.startsWith('ART-') ? decodedText : prev);
             }
             setShowScanner(false);
           }}

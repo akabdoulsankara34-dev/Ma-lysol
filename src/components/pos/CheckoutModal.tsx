@@ -91,19 +91,22 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   // USB Scanner Barcode Wedge listener for Avoir vouchers during checkout
   useEffect(() => {
-    const unsubscribe = usbBarcodeScanner.subscribe((scannedCode) => {
-      const codeUpper = scannedCode.trim().toUpperCase();
-      const codeClean = codeUpper.replace(/[\s-]/g, '');
+    const unsubscribe = usbBarcodeScanner.subscribe((scannedCode, scanInfo) => {
+      const alternatives = scanInfo?.alternatives || [scannedCode];
 
       // Check if this matches any avoir
       const foundAvoir = avoirs.find(a => {
         const num = a.numero.toUpperCase();
-        return num === codeUpper || num.replace(/[\s-]/g, '') === codeClean;
+        const numClean = num.replace(/[\s-]/g, '');
+        return alternatives.some(alt => {
+          const u = alt.toUpperCase().trim();
+          return u === num || u.replace(/[\s-]/g, '') === numClean;
+        });
       });
 
-      if (foundAvoir || codeUpper.startsWith('AV')) {
+      if (foundAvoir || scannedCode.toUpperCase().startsWith('AV')) {
         setPaymentMethod('avoir');
-        setAvoirCodeInput(foundAvoir ? foundAvoir.numero : codeUpper);
+        setAvoirCodeInput(foundAvoir ? foundAvoir.numero : scannedCode.trim().toUpperCase());
         setErrorMessage(null);
         usbBarcodeScanner.playBeep();
       }
