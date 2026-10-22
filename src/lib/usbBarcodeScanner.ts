@@ -45,25 +45,70 @@ const DEFAULT_SETTINGS: UsbScannerSettings = {
   suffixTimeoutMs: 280, // 280ms pause after a burst of keys = scan complete
 };
 
-// Map French AZERTY top row characters to digits 0-9
+// Map French AZERTY top row characters to digits 0-9 (including caps and Belgian/Swiss variants)
 const AZERTY_TO_DIGIT: Record<string, string> = {
   '&': '1',
+  '1': '1',
   'é': '2',
   'É': '2',
+  '2': '2',
   '"': '3',
+  '3': '3',
   "'": '4',
+  '4': '4',
   '(': '5',
+  '5': '5',
   '-': '6',
   '§': '6',
+  '|': '6',
+  '6': '6',
   'è': '7',
   'È': '7',
+  '7': '7',
   '_': '8',
   '!': '8',
+  '8': '8',
   'ç': '9',
   'Ç': '9',
+  '9': '9',
   'à': '0',
   'À': '0',
+  '0': '0',
 };
+
+// Swaps for QWERTY vs AZERTY letter transpositions (crucial for model codes like W572 <-> Z572)
+const AZERTY_QWERTY_SWAPS: Record<string, string> = {
+  'a': 'q', 'A': 'Q',
+  'q': 'a', 'Q': 'A',
+  'z': 'w', 'Z': 'W',
+  'w': 'z', 'W': 'Z',
+  'm': ',', 'M': '?',
+};
+
+/**
+ * Strips AIM Symbology Identifiers (e.g. ]e0 for EAN, ]C1 for Code 128, ]A0 for Code 39, ]Q1 for QR, ]d1 for DataMatrix)
+ * and non-printable ASCII control characters (\x00-\x1F, \x7F).
+ */
+export function stripAimAndControlChars(str: string): string {
+  if (!str) return '';
+  // Strip non-printable ASCII control chars
+  let cleaned = str.replace(/[\x00-\x1F\x7F]/g, '');
+  // Strip AIM prefix if present (']' followed by 1 to 3 alphanumeric characters)
+  cleaned = cleaned.replace(/^\][a-zA-Z0-9]{1,3}/, '');
+  return cleaned.trim();
+}
+
+/**
+ * Transposes alphanumeric letters between AZERTY and QWERTY (e.g. Z572 <-> W572)
+ */
+export function transposeAzertyQwertyLetters(str: string): string {
+  if (!str) return '';
+  let result = '';
+  for (const ch of str) {
+    result += AZERTY_QWERTY_SWAPS[ch] || ch;
+  }
+  return result;
+}
 
 /**
  * Normalizes barcode string handling AZERTY keyboard conversion if needed.
@@ -72,7 +117,7 @@ const AZERTY_TO_DIGIT: Record<string, string> = {
  */
 export function normalizeBarcode(rawText: string, azertyFix = true): string {
   if (!rawText) return '';
-  const trimmed = rawText.trim();
+  const trimmed = stripAimAndControlChars(rawText);
 
   if (!azertyFix) {
     return trimmed;
@@ -85,7 +130,9 @@ export function normalizeBarcode(rawText: string, azertyFix = true): string {
     const char = trimmed[i];
     if (AZERTY_TO_DIGIT[char] !== undefined) {
       azertyConverted += AZERTY_TO_DIGIT[char];
-      hasAzertyChar = true;
+      if (char !== AZERTY_TO_DIGIT[char]) {
+        hasAzertyChar = true;
+      }
     } else {
       azertyConverted += char;
     }
@@ -101,35 +148,49 @@ export function normalizeBarcode(rawText: string, azertyFix = true): string {
 
 /**
  * Generates an array of all possible barcode interpretations
- * (raw, azerty-converted, code-based, sanitized, zero-padded)
+ * (raw, stripped AIM, azerty-converted, code-based, letter-transposed, sanitized, zero-padded)
  */
 export function generateBarcodeAlternatives(raw: string, codeBased = ''): string[] {
   const alts = new Set<string>();
   const cleanRaw = (raw || '').trim();
-  if (cleanRaw) {
-    alts.add(cleanRaw);
-    alts.add(cleanRaw.toLowerCase());
-    alts.add(cleanRaw.toUpperCase());
-    alts.add(cleanRaw.replace(/[-\s._]/g, ''));
-  }
+  const strippedRaw = stripAimAndControlChars(cleanRaw);
 
-  const azerty = normalizeBarcode(cleanRaw, true);
-  if (azerty) {
-    alts.add(azerty);
-    alts.add(azerty.toLowerCase());
-    alts.add(azerty.toUpperCase());
-    alts.add(azerty.replace(/[-\s._]/g, ''));
-  }
+  const baseCandidates = [cleanRaw, strippedRaw, (codeBased || '').trim()];
 
-  const cleanCode = (codeBased || '').trim();
-  if (cleanCode) {
-    alts.add(cleanCode);
-    alts.add(cleanCode.toLowerCase());
-    alts.add(cleanCode.toUpperCase());
-    alts.add(cleanCode.replace(/[-\s._]/g, ''));
-  }
+  baseCandidates.forEach((cand) => {
+    if (!cand) return;
+    alts.add(cand);
+    alts.add(cand.toLowerCase());
+    alts.add(cand.toUpperCase());
+    alts.add(cand.replace(/[-\s._/]/g, ''));
 
-  // EAN-13 vs UPC-A: 12-digit code with leading zero
+    // AZERTY digit conversion
+    const azerty = normalizeBarcode(cand, true);
+    if (azerty) {
+      alts.add(azerty);
+      alts.add(azerty.toLowerCase());
+      alts.add(azerty.toUpperCase());
+      alts.add(azerty.replace(/[-\s._/]/g, ''));
+    }
+
+    // Letter transposition (e.g. W572 <-> Z572)
+    const transposed = transposeAzertyQwertyLetters(cand);
+    if (transposed && transposed !== cand) {
+      alts.add(transposed);
+      alts.add(transposed.toLowerCase());
+      alts.add(transposed.toUpperCase());
+      alts.add(transposed.replace(/[-\s._/]/g, ''));
+
+      const transposedAzerty = normalizeBarcode(transposed, true);
+      if (transposedAzerty) {
+        alts.add(transposedAzerty);
+        alts.add(transposedAzerty.toLowerCase());
+        alts.add(transposedAzerty.toUpperCase());
+      }
+    }
+  });
+
+  // EAN-13 vs UPC-A: 12-digit code with leading zero & 13-digit code starting with 0
   Array.from(alts).forEach((val) => {
     if (/^\d{12}$/.test(val)) {
       alts.add('0' + val);
@@ -294,6 +355,9 @@ class UsbBarcodeScannerService {
     }, { passive: true });
   }
 
+  private lastCommittedCode = '';
+  private lastCommittedTime = 0;
+
   private commitScan = (terminator: 'enter' | 'tab' | 'timeout' | 'manual', originatingEvent?: KeyboardEvent) => {
     if (this.autoSubmitTimer) {
       clearTimeout(this.autoSubmitTimer);
@@ -316,15 +380,19 @@ class UsbBarcodeScannerService {
     for (let i = 1; i < this.keyBuffer.length; i++) {
       intervals.push(this.keyBuffer[i].time - this.keyBuffer[i - 1].time);
     }
-    const avgInterval = intervals.length > 0 
-      ? intervals.reduce((a, b) => a + b, 0) / intervals.length 
+
+    // Wireless / Bluetooth wake-up adjustment:
+    // If the scanner had a wake-up lag on the first character, exclude intervals[0] if we have >= 4 chars
+    const burstIntervals = intervals.length >= 3 ? intervals.slice(1) : intervals;
+    const avgInterval = burstIntervals.length > 0 
+      ? burstIntervals.reduce((a, b) => a + b, 0) / burstIntervals.length 
       : 0;
 
     // Check if the sequence looks like a hardware scanner:
-    // With maxIntervalMs = 180, hardware scanners (10-150ms/key) will pass reliably.
-    const fastIntervalsCount = intervals.filter(d => d <= this.settings.maxIntervalMs * 1.5).length;
-    const isFastRatio = intervals.length > 0 ? (fastIntervalsCount / intervals.length) >= 0.6 : true;
-    const isKeyboardWedge = avgInterval <= this.settings.maxIntervalMs || (isFastRatio && avgInterval <= 220);
+    // Scanners operate between 2ms and 140ms per key.
+    const fastIntervalsCount = burstIntervals.filter(d => d <= this.settings.maxIntervalMs * 1.5).length;
+    const isFastRatio = burstIntervals.length > 0 ? (fastIntervalsCount / burstIntervals.length) >= 0.55 : true;
+    const isKeyboardWedge = avgInterval <= this.settings.maxIntervalMs || (isFastRatio && avgInterval <= 240);
 
     // Build raw & code-based strings
     let rawBarcode = '';
@@ -343,8 +411,9 @@ class UsbBarcodeScannerService {
       }
     }
 
-    // Apply AZERTY normalization
-    let finalDecoded = normalizeBarcode(rawBarcode, this.settings.azertyAutoFix);
+    // Apply AZERTY normalization & AIM stripping
+    const strippedRaw = stripAimAndControlChars(rawBarcode);
+    let finalDecoded = normalizeBarcode(strippedRaw || rawBarcode, this.settings.azertyAutoFix);
     const azertyFixed = finalDecoded !== rawBarcode;
 
     // If raw didn't resolve to digits, but codeBased did, prefer codeBased
@@ -368,10 +437,10 @@ class UsbBarcodeScannerService {
     };
 
     // If it's a hardware scanner burst OR terminated with Enter/Tab:
-    // Even on timeout, if >= minBarcodeLength keys arrived, treat as valid scan!
+    // Even on timeout, if >= minBarcodeLength keys arrived with fast burst, treat as valid scan!
     if (isKeyboardWedge || terminator === 'enter' || terminator === 'tab' || (terminator === 'timeout' && this.keyBuffer.length >= 3)) {
       if (originatingEvent) {
-        originatingEvent.preventDefault();
+        if (originatingEvent.cancelable) originatingEvent.preventDefault();
         originatingEvent.stopPropagation();
       }
 
@@ -379,17 +448,34 @@ class UsbBarcodeScannerService {
       const target = (originatingEvent?.target || document.activeElement) as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
         const inputElem = target as HTMLInputElement;
-        if (
+        const val = inputElem.value;
+        const matchesField = 
           inputElem.id === 'input-search-product' ||
-          inputElem.value.includes(rawBarcode) ||
-          inputElem.value.includes(finalDecoded)
-        ) {
+          inputElem.name === 'search' ||
+          inputElem.type === 'search' ||
+          val === rawBarcode ||
+          val === finalDecoded ||
+          val.includes(rawBarcode) ||
+          val.includes(finalDecoded);
+
+        if (matchesField) {
           try {
+            let newVal = val;
+            if (val === rawBarcode || val === finalDecoded) {
+              newVal = '';
+            } else if (val.endsWith(rawBarcode)) {
+              newVal = val.slice(0, -rawBarcode.length);
+            } else if (val.endsWith(finalDecoded)) {
+              newVal = val.slice(0, -finalDecoded.length);
+            } else if (inputElem.id === 'input-search-product') {
+              newVal = '';
+            }
+
             const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
             if (nativeSetter) {
-              nativeSetter.call(inputElem, '');
+              nativeSetter.call(inputElem, newVal);
             } else {
-              inputElem.value = '';
+              inputElem.value = newVal;
             }
             inputElem.dispatchEvent(new Event('input', { bubbles: true }));
             inputElem.dispatchEvent(new Event('change', { bubbles: true }));
@@ -398,6 +484,15 @@ class UsbBarcodeScannerService {
           }
         }
       }
+
+      // Debounce protection: ignore trigger bounce if exact same barcode arrives within 350ms
+      const nowTs = Date.now();
+      if (finalDecoded === this.lastCommittedCode && nowTs - this.lastCommittedTime < 350) {
+        this.keyBuffer = [];
+        return;
+      }
+      this.lastCommittedCode = finalDecoded;
+      this.lastCommittedTime = nowTs;
 
       this.lastScanInfo = scanInfo;
       this.keyBuffer = [];

@@ -539,7 +539,37 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
                   </div>
                 </div>
 
-                {/* 3. Réinitialisation Usine */}
+                {/* 3. Mode Clavier Français AZERTY */}
+                <div className="p-4 bg-white border-2 border-blue-300 rounded-2xl shadow-xs space-y-2.5 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="px-2 py-0.5 bg-blue-600 text-white rounded-md text-[10px] font-black uppercase">
+                        Configuration Clavier
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400">AZERTY Français</span>
+                    </div>
+                    <h5 className="font-extrabold text-slate-900 text-xs">
+                      3. Mode Clavier Français (AZERTY)
+                    </h5>
+                    <p className="text-[11px] text-slate-500">
+                      Configure la douchette pour qu'elle émette les chiffres directement sans nécessiter la touche Shift sous Windows français.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col items-center justify-center">
+                    <div 
+                      className="w-full max-w-[240px] py-1"
+                      dangerouslySetInnerHTML={{ 
+                        __html: generateCode128Svg('FRENCH-KB', { height: 60, fontSize: 10 }) 
+                      }} 
+                    />
+                    <span className="text-[10px] font-mono font-bold text-blue-600 mt-1">
+                      Scannez pour mode AZERTY
+                    </span>
+                  </div>
+                </div>
+
+                {/* 4. Réinitialisation Usine */}
                 <div className="p-4 bg-white border border-slate-300 rounded-2xl shadow-xs space-y-2.5 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-1">
@@ -549,7 +579,7 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
                       <span className="text-[10px] font-mono text-slate-400">Reset</span>
                     </div>
                     <h5 className="font-extrabold text-slate-900 text-xs">
-                      3. Réinitialisation Paramètres d'Usine (Factory Reset)
+                      4. Réinitialisation Paramètres d'Usine (Factory Reset)
                     </h5>
                     <p className="text-[11px] text-slate-500">
                       Restaure la douchette à ses réglages d'origine si elle a été déréglée ou si un mauvais code a été scanné.
@@ -569,26 +599,86 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
                   </div>
                 </div>
 
-                {/* 4. Test Immédiat Article Réel */}
+                {/* 5. Test Direct Modèle W572 */}
                 <div className="p-4 bg-white border-2 border-emerald-400 rounded-2xl shadow-xs space-y-2.5 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <span className="px-2 py-0.5 bg-emerald-600 text-white rounded-md text-[10px] font-black uppercase">
-                        Test Direct
+                        Test Modèle
                       </span>
-                      <span className="text-[10px] font-mono text-slate-400">Article Démo</span>
+                      <span className="text-[10px] font-mono text-slate-400">Code 128</span>
                     </div>
                     <h5 className="font-extrabold text-slate-900 text-xs">
-                      4. Test Immédiat : Robe Soie Koko Dunda
+                      5. Test Modèle : W572
                     </h5>
                     <p className="text-[11px] text-slate-500">
-                      Scannez ce code EAN-13 réel. S'il s'affiche en vert dans l'onglet Diagnostic, votre douchette fonctionne parfaitement !
+                      Scannez ce code modèle directement sur l'écran pour vérifier la compatibilité immédiate avec les références alphanumériques.
                     </p>
                   </div>
 
                   <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col items-center justify-center">
                     <div 
                       className="w-full max-w-[240px] py-1"
+                      dangerouslySetInnerHTML={{ 
+                        __html: generateCode128Svg('W572', { height: 60, fontSize: 10 }) 
+                      }} 
+                    />
+                    <span className="text-[10px] font-mono font-bold text-emerald-600 mt-1">
+                      W572 (Modèle Boutique)
+                    </span>
+                  </div>
+                </div>
+
+                {/* 6. Test Direct Modèle M255 */}
+                <div className="p-4 bg-white border-2 border-emerald-400 rounded-2xl shadow-xs space-y-2.5 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="px-2 py-0.5 bg-emerald-600 text-white rounded-md text-[10px] font-black uppercase">
+                        Test Modèle
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400">Code 128</span>
+                    </div>
+                    <h5 className="font-extrabold text-slate-900 text-xs">
+                      6. Test Modèle : M255
+                    </h5>
+                    <p className="text-[11px] text-slate-500">
+                      Scannez ce code modèle pour tester la détection de la lettre M et des chiffres sur clavier AZERTY ou QWERTY.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col items-center justify-center">
+                    <div 
+                      className="w-full max-w-[240px] py-1"
+                      dangerouslySetInnerHTML={{ 
+                        __html: generateCode128Svg('M255', { height: 60, fontSize: 10 }) 
+                      }} 
+                    />
+                    <span className="text-[10px] font-mono font-bold text-emerald-600 mt-1">
+                      M255 (Modèle Boutique)
+                    </span>
+                  </div>
+                </div>
+
+                {/* 7. Test Immédiat Article Réel EAN-13 */}
+                <div className="p-4 bg-white border-2 border-emerald-400 rounded-2xl shadow-xs space-y-2.5 flex flex-col justify-between md:col-span-2">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="px-2 py-0.5 bg-emerald-600 text-white rounded-md text-[10px] font-black uppercase">
+                        Test Direct EAN-13
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400">Article Démo</span>
+                    </div>
+                    <h5 className="font-extrabold text-slate-900 text-xs">
+                      7. Test Immédiat : Robe Soie Koko Dunda (618110001001)
+                    </h5>
+                    <p className="text-[11px] text-slate-500">
+                      Scannez ce code EAN-13 réel. S'il s'affiche en vert dans l'onglet Diagnostic, votre douchette fonctionne à 100% sans aucun pilote supplémentaire !
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col items-center justify-center">
+                    <div 
+                      className="w-full max-w-[280px] py-1"
                       dangerouslySetInnerHTML={{ 
                         __html: generateCode128Svg('618110001001', { height: 60, fontSize: 10 }) 
                       }} 
