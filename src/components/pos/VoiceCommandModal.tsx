@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   Mic, 
   MicOff, 
@@ -17,7 +17,10 @@ import {
   Send,
   ExternalLink,
   RefreshCw,
-  Lock
+  Lock,
+  Search,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { Product } from '../../types';
 import { 
@@ -73,6 +76,8 @@ export const VoiceCommandModal: React.FC<VoiceCommandModalProps> = ({
   const [isPermissionDenied, setIsPermissionDenied] = useState<boolean>(false);
   const [manualInput, setManualInput] = useState('');
   const [showExamples, setShowExamples] = useState(false);
+  const [showAllSamples, setShowAllSamples] = useState(false);
+  const [sampleFilter, setSampleFilter] = useState('');
   const [isSupported, setIsSupported] = useState(true);
 
   const recognitionRef = useRef<any>(null);
@@ -215,7 +220,7 @@ export const VoiceCommandModal: React.FC<VoiceCommandModalProps> = ({
           setErrorMessage("L'accès au microphone est actuellement bloqué par le navigateur.");
           setIsListening(false);
         } else if (event.error === 'no-speech') {
-          // Normal timeout between phrases
+          // Normal silence between sentences
         } else if (event.error !== 'aborted') {
           setErrorMessage(`Signal audio : ${event.error}`);
           setIsListening(false);
@@ -294,10 +299,23 @@ export const VoiceCommandModal: React.FC<VoiceCommandModalProps> = ({
     }, 250);
   };
 
-  if (!isOpen) return null;
-
   // Real products from store inventory for instant 1-click test pills
-  const sampleProducts = products.filter(p => !p.archived).slice(0, 4);
+  const activeCatalogProducts = useMemo(() => products.filter(p => !p.archived), [products]);
+  
+  const sampleProducts = useMemo(() => {
+    let list = activeCatalogProducts;
+    if (sampleFilter.trim()) {
+      const q = sampleFilter.toLowerCase().trim();
+      list = list.filter(p => 
+        p.name.toLowerCase().includes(q) || 
+        (p.sku && p.sku.toLowerCase().includes(q)) || 
+        (p.category && p.category.toLowerCase().includes(q))
+      );
+    }
+    return showAllSamples ? list : list.slice(0, 8);
+  }, [activeCatalogProducts, showAllSamples, sampleFilter]);
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
@@ -320,7 +338,7 @@ export const VoiceCommandModal: React.FC<VoiceCommandModalProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-500">
-                Dictez vos articles en français : nom, modèle ou quantité
+                Dictez vos articles : nom, modèle ({activeCatalogProducts.length} articles reconnus)
               </p>
             </div>
           </div>
@@ -375,7 +393,7 @@ export const VoiceCommandModal: React.FC<VoiceCommandModalProps> = ({
               </div>
 
               <div className="p-2 bg-white/70 rounded-lg text-[11px] text-amber-900 border border-amber-200">
-                💡 <strong>Astuce sur Chrome/Edge :</strong> Cliquez sur l'icône de réglages ou cadenas à gauche de l'adresse du site (en haut), puis réglez <em>Microphone</em> sur <strong>« Autoriser »</strong>.
+                💡 <strong>Astuce Chrome/Edge :</strong> Cliquez sur l'icône de cadenas ou de réglages à gauche de la barre d'adresse, puis activez <strong>« Microphone : Autoriser »</strong>.
               </div>
             </div>
           )}
@@ -420,7 +438,7 @@ export const VoiceCommandModal: React.FC<VoiceCommandModalProps> = ({
               <span>
                 {isListening 
                   ? "Microphone actif : Parlez maintenant..." 
-                  : "Microphone en attente. Cliquez sur le bouton noir pour démarrer l'écoute."}
+                  : "Microphone en pause. Cliquez pour démarrer l'écoute."}
               </span>
             </p>
 
@@ -443,33 +461,57 @@ export const VoiceCommandModal: React.FC<VoiceCommandModalProps> = ({
                 </div>
               ) : (
                 <span className="text-xs text-slate-400 italic">
-                  Dites par exemple : « Ajoute 2 robes koko dunda » ou « 3 savons »
+                  Dites : « Ajoute 2 robes koko dunda », « 3 savons », « Modèle W572 » ou « Encaisser »
                 </span>
               )}
             </div>
           </div>
 
-          {/* Instant 1-Click Test Buttons from Real Inventory (Always works, even without mic) */}
-          <div className="p-3.5 bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 rounded-2xl">
-            <div className="flex items-center justify-between mb-2">
+          {/* Instant 1-Click Test Buttons from Real Inventory */}
+          <div className="p-3.5 bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 rounded-2xl space-y-2">
+            <div className="flex items-center justify-between">
               <div className="text-[11px] font-bold text-purple-900 flex items-center space-x-1.5">
                 <Sparkles className="h-3.5 w-3.5 text-purple-600" />
-                <span>Test direct d'ajout au panier (1 clic) :</span>
+                <span>Test 1-clic direct ({activeCatalogProducts.length} articles disponibles) :</span>
               </div>
-              <span className="text-[10px] text-purple-700">Cliquez pour tester immédiatement</span>
+              <button
+                type="button"
+                onClick={() => setShowAllSamples(!showAllSamples)}
+                className="text-[10px] font-bold text-purple-700 hover:text-purple-900 flex items-center space-x-0.5 cursor-pointer underline"
+              >
+                <span>{showAllSamples ? 'Réduire' : `Voir tout (${activeCatalogProducts.length})`}</span>
+                {showAllSamples ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              </button>
             </div>
-            <div className="flex flex-wrap gap-1.5">
+
+            {/* Quick search input when showing all samples */}
+            {showAllSamples && (
+              <div className="relative">
+                <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-purple-400" />
+                <input
+                  type="text"
+                  placeholder="Filtrer parmi tous les articles..."
+                  value={sampleFilter}
+                  onChange={(e) => setSampleFilter(e.target.value)}
+                  className="w-full bg-white/90 border border-purple-200 rounded-xl pl-8 pr-3 py-1 text-xs text-purple-950 placeholder-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-400"
+                />
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto pr-1">
               {sampleProducts.map(p => (
                 <button
                   key={p.id}
                   type="button"
                   onClick={() => handleExecuteVoiceCommand(`ajoute 1 ${p.name}`)}
+                  title={`Dictez à haute voix : « Ajoute 1 ${p.name} » ou « Modèle ${p.sku} »`}
                   className="px-2.5 py-1 bg-white hover:bg-purple-100 text-purple-900 border border-purple-200 rounded-xl text-xs font-semibold transition shadow-2xs flex items-center space-x-1 cursor-pointer"
                 >
                   <Play className="h-2.5 w-2.5 text-purple-600 fill-current" />
-                  <span className="truncate max-w-[150px]">+1 {p.name}</span>
+                  <span className="truncate max-w-[140px]">+1 {p.name}</span>
                 </button>
               ))}
+
               <button
                 type="button"
                 onClick={() => handleExecuteVoiceCommand("vider le panier")}
@@ -478,6 +520,15 @@ export const VoiceCommandModal: React.FC<VoiceCommandModalProps> = ({
                 <Trash2 className="h-2.5 w-2.5 text-rose-600" />
                 <span>Vider panier</span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => handleExecuteVoiceCommand("encaisser")}
+                className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-semibold transition shadow-2xs flex items-center space-x-1 cursor-pointer"
+              >
+                <ShoppingBag className="h-2.5 w-2.5 text-emerald-600" />
+                <span>Encaisser</span>
+              </button>
             </div>
           </div>
 
@@ -485,7 +536,7 @@ export const VoiceCommandModal: React.FC<VoiceCommandModalProps> = ({
           <form onSubmit={handleManualSubmit} className="relative">
             <input
               type="text"
-              placeholder="Ou testez en tapant votre commande (ex: 2 robes, 3 savons, vider le panier)..."
+              placeholder="Ou testez en tapant votre commande (ex: 2 robes, 3 savons, W572, vider)..."
               value={manualInput}
               onChange={(e) => setManualInput(e.target.value)}
               className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-3 pr-24 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-rose-500 font-medium"
@@ -563,7 +614,7 @@ export const VoiceCommandModal: React.FC<VoiceCommandModalProps> = ({
             >
               <div className="flex items-center space-x-2">
                 <HelpCircle className="h-4 w-4 text-purple-600" />
-                <span>Exemples de phrases supportées</span>
+                <span>Exemples de phrases dictées supportées</span>
               </div>
               <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded-md text-slate-500">
                 {showExamples ? 'Masquer' : 'Afficher'}
@@ -576,11 +627,12 @@ export const VoiceCommandModal: React.FC<VoiceCommandModalProps> = ({
                   <div className="font-semibold text-slate-800 mb-1">Articles & Modèles :</div>
                   <div className="flex flex-wrap gap-1">
                     {[
-                      "Ajoute 2 robes", 
-                      "3 savons", 
-                      "Mets 1 flacon", 
-                      "Prends 2 koko dunda", 
+                      "Ajoute 2 robes koko dunda", 
+                      "3 savons curcuma", 
+                      "Prends 1 parfum sahel", 
                       "Modèle W572", 
+                      "MAE-ROB-001",
+                      "2 crèmes karité",
                       "Donne-moi 2 tailleurs"
                     ].map((ex) => (
                       <button
@@ -668,7 +720,7 @@ export const VoiceCommandModal: React.FC<VoiceCommandModalProps> = ({
         <div className="px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
           <div className="text-[11px] text-slate-500 flex items-center space-x-1.5">
             <Zap className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-            <span>Raccourci clavier : <strong>Alt + V</strong> ou <strong>Ctrl + M</strong></span>
+            <span>Raccourci clavier caisse : <strong>Alt + V</strong> ou <strong>Ctrl + M</strong></span>
           </div>
           <button
             type="button"
