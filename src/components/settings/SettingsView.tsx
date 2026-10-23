@@ -29,11 +29,24 @@ import {
   AlertCircle,
   Usb,
   Printer,
-  Laptop
+  Laptop,
+  Keyboard,
+  ScanBarcode,
+  Sliders,
+  ExternalLink,
+  Barcode,
+  Play,
+  Search,
+  CheckCircle,
+  HelpCircle
 } from 'lucide-react';
 import { blePrinter } from '../../lib/blePrinter';
 import { cashDrawerService } from '../../lib/cashDrawerService';
+import { usbBarcodeScanner, normalizeBarcode } from '../../lib/usbBarcodeScanner';
 import { TeamAccessManager } from './TeamAccessManager';
+import { UsbScannerModal } from '../pos/UsbScannerModal';
+import { CashDrawerModal } from '../pos/CashDrawerModal';
+import { BarcodeScanner } from '../BarcodeScanner';
 
 export const SettingsView: React.FC = () => {
   const { 
@@ -60,9 +73,25 @@ export const SettingsView: React.FC = () => {
   const [bizReceiptFooter, setBizReceiptFooter] = useState(business.receiptFooter || '');
   const [bizSaved, setBizSaved] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
+  
+  // Cash Drawer & Hardware Modals State
   const [drawerSettings, setDrawerSettings] = useState(cashDrawerService.getSettings());
   const [isTestingDrawer, setIsTestingDrawer] = useState(false);
   const [drawerTestMsg, setDrawerTestMsg] = useState<string | null>(null);
+  const [showUsbScannerModal, setShowUsbScannerModal] = useState(false);
+  const [showCameraScanner, setShowCameraScanner] = useState(false);
+  const [showCashDrawerModal, setShowCashDrawerModal] = useState(false);
+  const [testScanInput, setTestScanInput] = useState('');
+  const [lastScannedResult, setLastScannedResult] = useState<{
+    code: string;
+    found: boolean;
+    productName?: string;
+    productSku?: string;
+    productPrice?: number;
+    timestamp: number;
+  } | null>(null);
+
+  // BLE Printer State
   const [bleDeviceName, setBleDeviceName] = useState<string | null>(blePrinter.getConnectedDeviceName());
   const [bleTesting, setBleTesting] = useState(false);
   const [bleMsg, setBleMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -72,6 +101,50 @@ export const SettingsView: React.FC = () => {
       setBleDeviceName(blePrinter.getConnectedDeviceName());
     });
   }, []);
+
+  // Live test scan resolver
+  const handleTestBarcode = (rawCode: string) => {
+    const cleanCode = (rawCode || '').trim();
+    if (!cleanCode) return;
+
+    const searchLower = cleanCode.toLowerCase();
+    const alts = [searchLower, normalizeBarcode(searchLower).toLowerCase(), searchLower.replace(/[-\s._]/g, '')];
+    const match = products.find(p => !p.archived && (
+      alts.includes(p.sku.toLowerCase().trim()) ||
+      (p.barcode && alts.includes(p.barcode.toLowerCase().trim())) ||
+      alts.includes(p.sku.toLowerCase().replace(/[-\s._]/g, '')) ||
+      (p.barcode && alts.includes(p.barcode.toLowerCase().replace(/[-\s._]/g, '')))
+    ));
+
+    if (match) {
+      usbBarcodeScanner.playBeep();
+      setLastScannedResult({
+        code: cleanCode,
+        found: true,
+        productName: match.name,
+        productSku: match.sku,
+        productPrice: match.salePrice,
+        timestamp: Date.now()
+      });
+    } else {
+      usbBarcodeScanner.playError();
+      setLastScannedResult({
+        code: cleanCode,
+        found: false,
+        timestamp: Date.now()
+      });
+    }
+  };
+
+  // Background USB douchette listener on hardware tab for instant feedback
+  useEffect(() => {
+    if (activeSettingsTab !== 'printer') return;
+    const unsubscribe = usbBarcodeScanner.subscribe((code) => {
+      setTestScanInput(code);
+      handleTestBarcode(code);
+    });
+    return () => unsubscribe();
+  }, [activeSettingsTab, products]);
 
   const handleSaveBusiness = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -205,8 +278,8 @@ export const SettingsView: React.FC = () => {
               : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
           }`}
         >
-          <Unlock className="h-4 w-4" />
-          <span>Tiroir-Caisse & Imprimante POS</span>
+          <Sliders className="h-4 w-4" />
+          <span>Matériel Caisse & Périphériques</span>
         </button>
 
         <button
@@ -245,84 +318,112 @@ export const SettingsView: React.FC = () => {
           <form onSubmit={handleSaveBusiness} className="p-5 sm:p-6 space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Nom Commercial de la Boutique *</label>
-                <input
-                  type="text"
-                  required
-                  value={bizName}
-                  onChange={(e) => setBizName(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Nom du Commerce
+                </label>
+                <div className="relative">
+                  <Building2 className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    required
+                    value={bizName}
+                    onChange={(e) => setBizName(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Téléphone Principal (Contact Reçu) *</label>
-                <input
-                  type="text"
-                  required
-                  value={bizPhone}
-                  onChange={(e) => setBizPhone(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Téléphone / WhatsApp
+                </label>
+                <div className="relative">
+                  <Phone className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    required
+                    value={bizPhone}
+                    onChange={(e) => setBizPhone(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Ville & Quartier *</label>
-                <input
-                  type="text"
-                  required
-                  value={bizCity}
-                  onChange={(e) => setBizCity(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Ville / Quartier
+                </label>
+                <div className="relative">
+                  <MapPin className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    required
+                    value={bizCity}
+                    onChange={(e) => setBizCity(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Secteur d'Activité</label>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Secteur d'Activité
+                </label>
                 <input
                   type="text"
+                  required
                   value={bizSector}
                   onChange={(e) => setBizSector(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Numéro IFU (Identifiant Fiscal Unique)</label>
-                <input
-                  type="text"
-                  placeholder="Ex: 00148925K"
-                  value={bizIfu}
-                  onChange={(e) => setBizIfu(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Numéro IFU (Identifiant Fiscal Unique)
+                </label>
+                <div className="relative">
+                  <FileText className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Ex: 00194832Z"
+                    value={bizIfu}
+                    onChange={(e) => setBizIfu(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Devise Principale</label>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Devise du Commerce
+                </label>
                 <input
                   type="text"
                   disabled
-                  value="FCFA (Franc CFA de l'Afrique de l'Ouest - XOF)"
-                  className="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-600 font-semibold"
+                  value={business.currency}
+                  className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-xs sm:text-sm font-mono font-bold text-slate-600"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Message personnalisé imprimé en bas des reçus</label>
-              <input
-                type="text"
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                Pied de Page du Reçu de Caisse
+              </label>
+              <textarea
+                rows={2}
+                placeholder="Ex: Les marchandises vendues ne sont ni reprises ni échangées. Merci !"
                 value={bizReceiptFooter}
                 onChange={(e) => setBizReceiptFooter(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
 
             <div className="flex justify-end pt-2">
               <button
                 type="submit"
-                className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold text-xs sm:text-sm shadow-xs transition cursor-pointer"
+                className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold text-xs sm:text-sm shadow-md transition cursor-pointer"
               >
                 <Save className="h-4 w-4" />
                 <span>Enregistrer les Coordonnées</span>
@@ -332,48 +433,198 @@ export const SettingsView: React.FC = () => {
         </div>
       )}
 
-      {/* 3. POS-80 BLE Printer, Cash Drawer & PWA settings */}
+      {/* 3. HARDWARE & PERIPHERALS: USB Scanner, Camera Scanner, Cash Drawer & BLE Printer */}
       {activeSettingsTab === 'printer' && (
-        <div className="space-y-4">
+        <div className="space-y-5">
           
-          {/* Automatic Cash Drawer Card */}
+          {/* Informative Header Banner */}
+          <div className="p-4 bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 border border-blue-200 rounded-2xl flex items-start space-x-3 text-xs text-blue-950">
+            <div className="p-2 bg-blue-600 text-white rounded-xl shrink-0 mt-0.5 shadow-xs">
+              <Sliders className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="font-extrabold text-sm text-blue-950">
+                Gestion Centralisée du Matériel Propriétaire
+              </h3>
+              <p className="mt-0.5 text-blue-800 leading-relaxed">
+                Le <strong>scanner caméra</strong>, la <strong>douchette USB</strong> et le <strong>tiroir-caisse</strong> sont configurés ici afin de libérer 100% de la largeur de la barre de recherche en caisse. La douchette USB continue de lire automatiquement vos codes-barres en tâche de fond.
+              </p>
+            </div>
+          </div>
+
+          {/* CARD 1: USB Barcode Scanner (Douchette USB) */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
-            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-amber-50/70">
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50">
+              <div className="flex items-center space-x-3">
+                <div className="h-10 w-10 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                  <Keyboard className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <h2 className="font-bold text-slate-900 text-sm sm:text-base">Douchette Code-Barres USB & Sans-Fil (Émulation Clavier)</h2>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      Prête & Active
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500">Fonctionne automatiquement sans pilote : branchez en USB et scannez n'importe où dans l'application.</p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowUsbScannerModal(true)}
+                className="flex items-center space-x-1.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white px-3.5 py-2 rounded-xl font-bold text-xs shadow-xs transition cursor-pointer shrink-0"
+              >
+                <Sliders className="h-4 w-4" />
+                <span>Diagnostics & Réglages Douchette</span>
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs">
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-slate-800 flex items-center space-x-1.5">
+                    <Barcode className="h-4 w-4 text-indigo-600" />
+                    <span>Zone de Test Direct Douchette USB</span>
+                  </label>
+                  <span className="text-[10px] text-slate-500">Bipez avec votre douchette ou tapez un code</span>
+                </div>
+
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type="text"
+                      placeholder="Scannez un code avec la douchette pour tester la lecture..."
+                      value={testScanInput}
+                      onChange={(e) => setTestScanInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && testScanInput.trim()) {
+                          handleTestBarcode(testScanInput);
+                        }
+                      }}
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleTestBarcode(testScanInput)}
+                    disabled={!testScanInput.trim()}
+                    className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl transition disabled:opacity-40 cursor-pointer"
+                  >
+                    Vérifier
+                  </button>
+                </div>
+
+                {lastScannedResult && (
+                  <div className={`p-3 rounded-xl border flex items-center justify-between animate-in fade-in ${
+                    lastScannedResult.found 
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-950' 
+                      : 'bg-amber-50 border-amber-200 text-amber-950'
+                  }`}>
+                    <div className="flex items-center space-x-2">
+                      <div className={`p-1.5 rounded-lg ${lastScannedResult.found ? 'bg-emerald-200 text-emerald-800' : 'bg-amber-200 text-amber-800'}`}>
+                        {lastScannedResult.found ? <CheckCircle className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+                      </div>
+                      <div>
+                        {lastScannedResult.found ? (
+                          <>
+                            <p className="font-bold text-xs">{lastScannedResult.productName}</p>
+                            <p className="text-[10px] text-emerald-700 font-mono">
+                              Réf: {lastScannedResult.productSku} • Prix: {lastScannedResult.productPrice?.toLocaleString('fr-FR')} {business.currency} • Code: {lastScannedResult.code}
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="font-bold text-xs">Code non attribué : {lastScannedResult.code}</p>
+                            <p className="text-[10px] text-amber-700">Ce code-barres n'est pas encore associé à un article du catalogue.</p>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <span className="text-[9px] font-mono opacity-70">Bip reçu</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* CARD 2: Camera Barcode Scanner (Appareil photo / Webcam) */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50">
+              <div className="flex items-center space-x-3">
+                <div className="h-10 w-10 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
+                  <ScanBarcode className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <h2 className="font-bold text-slate-900 text-sm sm:text-base">Scanner Code-Barres Caméra (Smartphone & Tablette)</h2>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800">
+                      Optique
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500">Permet de scanner les codes-barres avec l'appareil photo si vous n'avez pas de douchette USB.</p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowCameraScanner(true)}
+                className="flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white px-3.5 py-2 rounded-xl font-bold text-xs shadow-xs transition cursor-pointer shrink-0"
+              >
+                <ScanBarcode className="h-4 w-4" />
+                <span>Lancer le Scanner Caméra</span>
+              </button>
+            </div>
+          </div>
+
+          {/* CARD 3: Automatic Cash Drawer Card */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-amber-50/70">
               <div className="flex items-center space-x-2.5">
                 <div className="h-9 w-9 rounded-xl bg-amber-500/20 text-amber-800 flex items-center justify-center">
                   <Unlock className="h-5 w-5" />
                 </div>
                 <div>
                   <h2 className="font-bold text-slate-900 text-sm sm:text-base">Caisse à Monnaie Automatique (Tiroir-Caisse)</h2>
-                  <p className="text-[11px] text-amber-800 font-medium">Déclenchement automatique de l'ouverture lors de la validation du reçu de caisse</p>
+                  <p className="text-[11px] text-amber-800 font-medium">Déclenchement automatique de l'ouverture et pilotage d'éjection électromagnétique</p>
                 </div>
               </div>
-              <button
-                type="button"
-                disabled={isTestingDrawer}
-                onClick={async () => {
-                  setIsTestingDrawer(true);
-                  setDrawerTestMsg(null);
-                  try {
-                    const res = await cashDrawerService.triggerDrawer({
-                      reason: 'Test ouverture depuis Paramètres',
-                      isManual: true,
-                      operatorName: 'Administrateur',
-                      force: true
-                    });
-                    setDrawerTestMsg(res.hardwareKicked ? 'Signal matériel envoyé au tiroir !' : 'Tiroir déclenché (simulation sonore active) !');
-                    setTimeout(() => setDrawerTestMsg(null), 4000);
-                  } catch (e: any) {
-                    setDrawerTestMsg(`Erreur : ${e.message}`);
-                  } finally {
-                    setIsTestingDrawer(false);
-                  }
-                }}
-                className="flex items-center space-x-1.5 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white px-3.5 py-2 rounded-xl font-bold text-xs shadow-xs transition cursor-pointer disabled:opacity-50"
-              >
-                <Zap className="h-4 w-4" />
-                <span>{isTestingDrawer ? 'Ouverture...' : 'Tester le Tiroir'}</span>
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setShowCashDrawerModal(true)}
+                  className="px-3 py-2 bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-xl font-bold text-xs transition cursor-pointer"
+                >
+                  Panneau Avancé & Journal
+                </button>
+                <button
+                  type="button"
+                  disabled={isTestingDrawer}
+                  onClick={async () => {
+                    setIsTestingDrawer(true);
+                    setDrawerTestMsg(null);
+                    try {
+                      const res = await cashDrawerService.triggerDrawer({
+                        reason: 'Test ouverture depuis Paramètres Propriétaire',
+                        isManual: true,
+                        operatorName: 'Propriétaire',
+                        force: true
+                      });
+                      setDrawerTestMsg(res.hardwareKicked ? 'Signal matériel envoyé au tiroir !' : 'Tiroir déclenché (simulation sonore active) !');
+                      setTimeout(() => setDrawerTestMsg(null), 4000);
+                    } catch (e: any) {
+                      setDrawerTestMsg(`Erreur : ${e.message}`);
+                    } finally {
+                      setIsTestingDrawer(false);
+                    }
+                  }}
+                  className="flex items-center space-x-1.5 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white px-3.5 py-2 rounded-xl font-bold text-xs shadow-xs transition cursor-pointer disabled:opacity-50"
+                >
+                  <Zap className="h-4 w-4" />
+                  <span>{isTestingDrawer ? 'Ouverture...' : 'Tester le Tiroir'}</span>
+                </button>
+              </div>
             </div>
 
             {drawerTestMsg && (
@@ -512,7 +763,7 @@ export const SettingsView: React.FC = () => {
             </div>
           </div>
 
-          {/* POS-80 BLE Printer Card */}
+          {/* CARD 4: POS-80 BLE Printer Card */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
             <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
               <div className="flex items-center space-x-2">
@@ -521,129 +772,129 @@ export const SettingsView: React.FC = () => {
               </div>
             </div>
 
-          <div className="p-5 space-y-4 text-xs">
-            <div className="p-4 bg-blue-50/60 border border-blue-200 rounded-xl space-y-3">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="p-5 space-y-4 text-xs">
+              <div className="p-4 bg-blue-50/60 border border-blue-200 rounded-xl space-y-3">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Bluetooth className="h-4 w-4 text-blue-600" />
+                      <p className="font-bold text-slate-900">Imprimante Thermique POS-80 / POS-58 (Couplage Ultra-Rapide)</p>
+                    </div>
+                    <p className="text-slate-600 text-[11px]">
+                      Connectez directement votre smartphone, tablette ou PC. Profils de scanning ciblés et cache GATT pour une reconnexion sous les 300 ms.
+                    </p>
+                    <div className="flex items-center gap-2 pt-1 flex-wrap">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                        blePrinter.isConnected()
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : blePrinter.hasPairedPrinter()
+                            ? 'bg-blue-100 text-blue-800'
+                            : 'bg-slate-100 text-slate-600'
+                      }`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${
+                          blePrinter.isConnected() ? 'bg-emerald-500 animate-pulse' : blePrinter.hasPairedPrinter() ? 'bg-blue-500' : 'bg-slate-400'
+                        }`} />
+                        {blePrinter.isConnected()
+                          ? `Connectée : ${blePrinter.getConnectedDeviceName()}`
+                          : blePrinter.hasPairedPrinter()
+                            ? `Couplée en cache : ${blePrinter.getLastPairedDeviceName()}`
+                            : 'Aucune imprimante couplée'}
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        ⚡ Cache GATT & Scanning filtré actif
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap shrink-0">
+                    <button
+                      disabled={bleTesting}
+                      onClick={async () => {
+                        setBleTesting(true);
+                        setBleMsg(null);
+                        try {
+                          const dev = await blePrinter.connect(true);
+                          setBleDeviceName(dev.name);
+                          setBleMsg({ type: 'success', text: `Imprimante couplée et connectée avec succès : ${dev.name}` });
+                        } catch (e: any) {
+                          setBleMsg({ type: 'error', text: e.message || 'Erreur de couplage Bluetooth' });
+                        } finally {
+                          setBleTesting(false);
+                        }
+                      }}
+                      className="flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white px-3 py-2 rounded-xl font-bold text-xs shadow-xs transition disabled:opacity-50 cursor-pointer"
+                    >
+                      <Bluetooth className="h-4 w-4" />
+                      <span>{blePrinter.hasPairedPrinter() ? 'Re-coupler Imprimante' : 'Coupler Imprimante (Rapide)'}</span>
+                    </button>
+
+                    {blePrinter.hasPairedPrinter() && (
+                      <>
+                        <button
+                          disabled={bleTesting}
+                          onClick={async () => {
+                            setBleTesting(true);
+                            setBleMsg(null);
+                            try {
+                              const dev = await blePrinter.connect(false);
+                              setBleDeviceName(dev.name);
+                              setBleMsg({ type: 'success', text: `Reconnexion instantanée réussie (<0.3s) à ${dev.name}` });
+                            } catch (e: any) {
+                              setBleMsg({ type: 'error', text: e.message || 'Échec de reconnexion' });
+                            } finally {
+                              setBleTesting(false);
+                            }
+                          }}
+                          className="bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 px-3 py-2 rounded-xl font-bold text-xs transition cursor-pointer"
+                          title="Tester la reconnexion automatique sans scanner"
+                        >
+                          Tester Reconnexion
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            blePrinter.clearSavedPrinter();
+                            setBleDeviceName(null);
+                            setBleMsg({ type: 'success', text: 'Imprimante oubliée du cache.' });
+                          }}
+                          className="text-red-600 hover:text-red-800 text-[11px] font-semibold underline px-1 py-1 cursor-pointer"
+                          title="Effacer le périphérique mémorisé pour réinitialiser le couplage"
+                        >
+                          Oublier
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {bleMsg && (
+                  <div className={`p-2.5 rounded-lg text-xs font-medium border ${
+                    bleMsg.type === 'success' 
+                      ? 'bg-emerald-100 text-emerald-900 border-emerald-300' 
+                      : 'bg-rose-100 text-rose-900 border-rose-300'
+                  }`}>
+                    {bleMsg.text}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3.5 bg-emerald-50/60 border border-emerald-200 rounded-xl">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
-                    <Bluetooth className="h-4 w-4 text-blue-600" />
-                    <p className="font-bold text-slate-900">Imprimante Thermique POS-80 / POS-58 (Couplage Ultra-Rapide)</p>
+                    <WifiOff className="h-4 w-4 text-emerald-600" />
+                    <p className="font-bold text-slate-900">Fonctionnement 100% Hors-Ligne & Installation PWA</p>
                   </div>
                   <p className="text-slate-600 text-[11px]">
-                    Connectez directement votre smartphone, tablette ou PC. Profils de scanning ciblés et cache GATT pour une reconnexion sous les 300 ms.
+                    BizPilot enregistre chaque vente localement sur votre appareil. Même sans connexion Internet, vos encaissements et stocks restent actifs.
                   </p>
-                  <div className="flex items-center gap-2 pt-1 flex-wrap">
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                      blePrinter.isConnected()
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : blePrinter.hasPairedPrinter()
-                          ? 'bg-blue-100 text-blue-800'
-                          : 'bg-slate-100 text-slate-600'
-                    }`}>
-                      <span className={`h-1.5 w-1.5 rounded-full ${
-                        blePrinter.isConnected() ? 'bg-emerald-500 animate-pulse' : blePrinter.hasPairedPrinter() ? 'bg-blue-500' : 'bg-slate-400'
-                      }`} />
-                      {blePrinter.isConnected()
-                        ? `Connectée : ${blePrinter.getConnectedDeviceName()}`
-                        : blePrinter.hasPairedPrinter()
-                          ? `Couplée en cache : ${blePrinter.getLastPairedDeviceName()}`
-                          : 'Aucune imprimante couplée'}
-                    </span>
-                    <span className="text-[10px] text-slate-400 font-mono">
-                      ⚡ Cache GATT & Scanning filtré actif
-                    </span>
-                  </div>
                 </div>
-
-                <div className="flex items-center gap-2 flex-wrap shrink-0">
-                  <button
-                    disabled={bleTesting}
-                    onClick={async () => {
-                      setBleTesting(true);
-                      setBleMsg(null);
-                      try {
-                        const dev = await blePrinter.connect(true);
-                        setBleDeviceName(dev.name);
-                        setBleMsg({ type: 'success', text: `Imprimante couplée et connectée avec succès : ${dev.name}` });
-                      } catch (e: any) {
-                        setBleMsg({ type: 'error', text: e.message || 'Erreur de couplage Bluetooth' });
-                      } finally {
-                        setBleTesting(false);
-                      }
-                    }}
-                    className="flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white px-3 py-2 rounded-xl font-bold text-xs shadow-xs transition disabled:opacity-50 cursor-pointer"
-                  >
-                    <Bluetooth className="h-4 w-4" />
-                    <span>{blePrinter.hasPairedPrinter() ? 'Re-coupler Imprimante' : 'Coupler Imprimante (Rapide)'}</span>
-                  </button>
-
-                  {blePrinter.hasPairedPrinter() && (
-                    <>
-                      <button
-                        disabled={bleTesting}
-                        onClick={async () => {
-                          setBleTesting(true);
-                          setBleMsg(null);
-                          try {
-                            const dev = await blePrinter.connect(false);
-                            setBleDeviceName(dev.name);
-                            setBleMsg({ type: 'success', text: `Reconnexion instantanée réussie (<0.3s) à ${dev.name}` });
-                          } catch (e: any) {
-                            setBleMsg({ type: 'error', text: e.message || 'Échec de reconnexion' });
-                          } finally {
-                            setBleTesting(false);
-                          }
-                        }}
-                        className="bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 px-3 py-2 rounded-xl font-bold text-xs transition cursor-pointer"
-                        title="Tester la reconnexion automatique sans scanner"
-                      >
-                        Tester Reconnexion
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          blePrinter.clearSavedPrinter();
-                          setBleDeviceName(null);
-                          setBleMsg({ type: 'success', text: 'Imprimante oubliée du cache.' });
-                        }}
-                        className="text-red-600 hover:text-red-800 text-[11px] font-semibold underline px-1 py-1 cursor-pointer"
-                        title="Effacer le périphérique mémorisé pour réinitialiser le couplage"
-                      >
-                        Oublier
-                      </button>
-                    </>
-                  )}
-                </div>
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-100 text-emerald-800 font-bold text-[11px]">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> PWA Prêt (Ajouter à l'écran d'accueil)
+                </span>
               </div>
-
-              {bleMsg && (
-                <div className={`p-2.5 rounded-lg text-xs font-medium border ${
-                  bleMsg.type === 'success' 
-                    ? 'bg-emerald-100 text-emerald-900 border-emerald-300' 
-                    : 'bg-rose-100 text-rose-900 border-rose-300'
-                }`}>
-                  {bleMsg.text}
-                </div>
-              )}
-            </div>
-
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3.5 bg-emerald-50/60 border border-emerald-200 rounded-xl">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <WifiOff className="h-4 w-4 text-emerald-600" />
-                  <p className="font-bold text-slate-900">Fonctionnement 100% Hors-Ligne & Installation PWA</p>
-                </div>
-                <p className="text-slate-600 text-[11px]">
-                  BizPilot enregistre chaque vente localement sur votre appareil. Même sans connexion Internet, vos encaissements et stocks restent actifs.
-                </p>
-              </div>
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-100 text-emerald-800 font-bold text-[11px]">
-                <CheckCircle2 className="h-3.5 w-3.5" /> PWA Prêt (Ajouter à l'écran d'accueil)
-              </span>
             </div>
           </div>
         </div>
-      </div>
       )}
 
       {/* 4. Backup & Restoration */}
@@ -686,6 +937,31 @@ export const SettingsView: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* MODALS ACCESSIBLE FROM OWNER SETTINGS */}
+      {showUsbScannerModal && (
+        <UsbScannerModal
+          isOpen={showUsbScannerModal}
+          onClose={() => setShowUsbScannerModal(false)}
+        />
+      )}
+
+      {showCashDrawerModal && (
+        <CashDrawerModal
+          onClose={() => setShowCashDrawerModal(false)}
+          operatorName="Propriétaire"
+        />
+      )}
+
+      {showCameraScanner && (
+        <BarcodeScanner
+          onScan={(code) => {
+            handleTestBarcode(code);
+            setShowCameraScanner(false);
+          }}
+          onClose={() => setShowCameraScanner(false)}
+        />
       )}
 
     </div>

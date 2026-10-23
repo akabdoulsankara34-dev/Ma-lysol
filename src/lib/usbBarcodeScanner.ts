@@ -389,10 +389,32 @@ class UsbBarcodeScannerService {
       : 0;
 
     // Check if the sequence looks like a hardware scanner:
-    // Scanners operate between 2ms and 140ms per key.
-    const fastIntervalsCount = burstIntervals.filter(d => d <= this.settings.maxIntervalMs * 1.5).length;
-    const isFastRatio = burstIntervals.length > 0 ? (fastIntervalsCount / burstIntervals.length) >= 0.55 : true;
-    const isKeyboardWedge = avgInterval <= this.settings.maxIntervalMs || (isFastRatio && avgInterval <= 240);
+    // Physical barcode scanners send characters with extreme burst speed (<= 50ms average).
+    // Human typists cannot type multiple characters with average interval under 55ms.
+    const isHardwareSpeed = avgInterval <= 65;
+    const isFastRatio = burstIntervals.length > 0 ? (burstIntervals.filter(d => d <= 55).length / burstIntervals.length) >= 0.7 : true;
+
+    const target = (originatingEvent?.target || document.activeElement) as HTMLElement | null;
+    const isInsideInput = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || (target as any).isContentEditable);
+
+    // If user is typing inside an input field, it MUST be a hardware burst to be considered a scan.
+    // If it's normal human typing, abort immediately and DO NOT modify the input!
+    const isKeyboardWedge = isHardwareSpeed || (!isInsideInput && (avgInterval <= this.settings.maxIntervalMs || (isFastRatio && avgInterval <= 180)));
+
+    if (isInsideInput && !isHardwareSpeed) {
+      this.keyBuffer = [];
+      return;
+    }
+
+    if (terminator === 'timeout' && (!isHardwareSpeed || this.keyBuffer.length < this.settings.minBarcodeLength)) {
+      this.keyBuffer = [];
+      return;
+    }
+
+    if ((terminator === 'enter' || terminator === 'tab') && isInsideInput && !isHardwareSpeed) {
+      this.keyBuffer = [];
+      return;
+    }
 
     // Build raw & code-based strings
     let rawBarcode = '';
@@ -416,7 +438,6 @@ class UsbBarcodeScannerService {
     let finalDecoded = normalizeBarcode(strippedRaw || rawBarcode, this.settings.azertyAutoFix);
     const azertyFixed = finalDecoded !== rawBarcode;
 
-    // If raw didn't resolve to digits, but codeBased did, prefer codeBased
     if (/^\d+$/.test(codeBasedBarcode) && !/^\d+$/.test(finalDecoded)) {
       finalDecoded = codeBasedBarcode;
     }
@@ -436,56 +457,33 @@ class UsbBarcodeScannerService {
       alternatives,
     };
 
-    // If it's a hardware scanner burst OR terminated with Enter/Tab:
-    // Even on timeout, if >= minBarcodeLength keys arrived with fast burst, treat as valid scan!
-    if (isKeyboardWedge || terminator === 'enter' || terminator === 'tab' || (terminator === 'timeout' && this.keyBuffer.length >= 3)) {
+    // Hardware scanner burst confirmed
+    if (isKeyboardWedge || isHardwareSpeed) {
       if (originatingEvent) {
         if (originatingEvent.cancelable) originatingEvent.preventDefault();
         originatingEvent.stopPropagation();
       }
 
-      // Check if target is an input and clean it up so barcode doesn't pollute the field
-      const target = (originatingEvent?.target || document.activeElement) as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+      // Only clean up the input if the text in it actually matches or ends with the scanned barcode
+      if (isInsideInput) {
         const inputElem = target as HTMLInputElement;
-        const val = inputElem.value;
-        const matchesField = 
-          inputElem.id === 'input-search-product' ||
-          inputElem.name === 'search' ||
-          inputElem.type === 'search' ||
-          val === rawBarcode ||
-          val === finalDecoded ||
-          val.includes(rawBarcode) ||
-          val.includes(finalDecoded);
+        const val = inputElem.value || '';
+        const matchesBarcode = val === rawBarcode || val === finalDecoded;
+        const endsWithBarcode = (rawBarcode && val.endsWith(rawBarcode)) || (finalDecoded && val.endsWith(finalDecoded));
 
-        if (matchesField) {
-          try {
-            let newVal = val;
-            if (val === rawBarcode || val === finalDecoded) {
-              newVal = '';
-            } else if (val.endsWith(rawBarcode)) {
-              newVal = val.slice(0, -rawBarcode.length);
-            } else if (val.endsWith(finalDecoded)) {
-              newVal = val.slice(0, -finalDecoded.length);
-            } else if (inputElem.id === 'input-search-product') {
-              newVal = '';
-            }
-
-            const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-            if (nativeSetter) {
-              nativeSetter.call(inputElem, newVal);
-            } else {
-              inputElem.value = newVal;
-            }
-            inputElem.dispatchEvent(new Event('input', { bubbles: true }));
-            inputElem.dispatchEvent(new Event('change', { bubbles: true }));
-          } catch {
-            inputElem.value = '';
-          }
+        if (matchesBarcode) {
+          inputElem.value = '';
+          inputElem.dispatchEvent(new Event('input', { bubbles: true }));
+          inputElem.dispatchEvent(new Event('change', { bubbles: true }));
+        } else if (endsWithBarcode) {
+          const toRemove = (rawBarcode && val.endsWith(rawBarcode)) ? rawBarcode.length : finalDecoded.length;
+          inputElem.value = val.slice(0, -toRemove);
+          inputElem.dispatchEvent(new Event('input', { bubbles: true }));
+          inputElem.dispatchEvent(new Event('change', { bubbles: true }));
         }
       }
 
-      // Debounce protection: ignore trigger bounce if exact same barcode arrives within 350ms
+      // Debounce protection
       const nowTs = Date.now();
       if (finalDecoded === this.lastCommittedCode && nowTs - this.lastCommittedTime < 350) {
         this.keyBuffer = [];
@@ -500,7 +498,6 @@ class UsbBarcodeScannerService {
       return;
     }
 
-    // Otherwise it was slow human typing that timed out, reset buffer
     this.keyBuffer = [];
   };
 
@@ -511,6 +508,9 @@ class UsbBarcodeScannerService {
     if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(e.key)) {
       return;
     }
+
+    const target = (e.target || document.activeElement) as HTMLElement | null;
+    const isTargetInput = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || (target as any).isContentEditable);
 
     const now = performance.now();
 
@@ -537,11 +537,26 @@ class UsbBarcodeScannerService {
     // 1. Scanner Suffix: Enter or Tab
     if (isEnterKey || isTabKey) {
       this.lastEnterTimestamp = now;
+
+      // If user is inside an input, verify if the buffer was a rapid hardware burst
+      if (isTargetInput) {
+        const intervals = this.keyBuffer.length > 1 ? this.keyBuffer.slice(1).map((k, idx) => k.time - this.keyBuffer[idx].time) : [];
+        const avg = intervals.length > 0 ? intervals.reduce((a, b) => a + b, 0) / intervals.length : 0;
+        const isHardwareBurst = avg <= 65 && this.keyBuffer.length >= this.settings.minBarcodeLength;
+
+        if (!isHardwareBurst) {
+          // Normal human pressed Enter on an input - let the input handle it naturally!
+          this.keyBuffer = [];
+          if (this.autoSubmitTimer) clearTimeout(this.autoSubmitTimer);
+          if (this.bufferExpiryTimer) clearTimeout(this.bufferExpiryTimer);
+          return;
+        }
+      }
+
       if (this.keyBuffer.length >= this.settings.minBarcodeLength) {
         this.commitScan(isEnterKey ? 'enter' : 'tab', e);
         return;
       }
-      // If buffer is too small, just reset on Enter/Tab
       this.keyBuffer = [];
       if (this.autoSubmitTimer) clearTimeout(this.autoSubmitTimer);
       if (this.bufferExpiryTimer) clearTimeout(this.bufferExpiryTimer);
@@ -572,8 +587,13 @@ class UsbBarcodeScannerService {
         const lastKey = this.keyBuffer[this.keyBuffer.length - 1];
         intervalWithLast = now - lastKey.time;
 
-        // If pause is very long (> 500ms), it's a new scan
+        // If pause is longer than 450ms, it's a new scan sequence
         if (intervalWithLast > Math.max(450, this.settings.maxIntervalMs * 3.5)) {
+          this.keyBuffer = [];
+        }
+
+        // If inside an input field and typing interval is human speed (> 70ms), reset buffer
+        if (isTargetInput && intervalWithLast > 70) {
           this.keyBuffer = [];
         }
       }
@@ -601,7 +621,8 @@ class UsbBarcodeScannerService {
         });
       }
 
-      // Reset auto-commit timeout for scanners WITHOUT Enter suffix
+      // Reset auto-commit timeout for hardware scanners WITHOUT Enter suffix
+      // Never auto-submit on timeout if the user is inside an input field unless it's a confirmed fast burst!
       if (this.autoSubmitTimer) clearTimeout(this.autoSubmitTimer);
       if (this.settings.autoSubmitOnTimeout && this.keyBuffer.length >= this.settings.minBarcodeLength) {
         this.autoSubmitTimer = setTimeout(() => {

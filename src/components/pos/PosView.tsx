@@ -176,18 +176,32 @@ export const PosView: React.FC = () => {
     return ['Tous', ...Array.from(set)];
   }, [products]);
 
-  // Filtered products list
+  // Filtered products list (Searches across all categories with accent & typo tolerance when query is active)
   const filteredProducts = useMemo(() => {
+    const rawSearch = searchQuery.trim();
+    if (!rawSearch) {
+      return products.filter(p => !p.archived && (selectedCategory === 'Tous' || p.category === selectedCategory));
+    }
+
+    const normSearch = rawSearch
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+
     return products.filter(p => {
       if (p.archived) return false;
-      const matchesCategory = selectedCategory === 'Tous' || p.category === selectedCategory;
-      const searchLower = searchQuery.toLowerCase().trim();
-      const matchesSearch = 
-        p.name.toLowerCase().includes(searchLower) ||
-        p.sku.toLowerCase().includes(searchLower) ||
-        (p.barcode && p.barcode.toLowerCase().includes(searchLower)) ||
-        p.category.toLowerCase().includes(searchLower);
-      return matchesCategory && matchesSearch;
+
+      const normName = p.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const normSku = p.sku.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const normBar = p.barcode ? p.barcode.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() : '';
+      const normCat = p.category ? p.category.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() : '';
+
+      return (
+        normName.includes(normSearch) ||
+        normSku.includes(normSearch) ||
+        normBar.includes(normSearch) ||
+        normCat.includes(normSearch)
+      );
     });
   }, [products, selectedCategory, searchQuery]);
 
@@ -513,153 +527,88 @@ export const PosView: React.FC = () => {
         mobilePosTab === 'cart' ? 'hidden lg:flex' : 'flex'
       }`}>
         
-        {/* Top Controls: Search Bar, Customer Display & Recent Sales Button */}
+        {/* Top Controls: Wide Search Bar, Customer Display & Recent Sales Button */}
         <div className="flex items-center space-x-2 sm:space-x-3 mb-3 shrink-0">
-          <div className="relative flex-1 flex">
-            <div className="relative flex-1">
-              <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                id="input-search-product"
-                type="text"
-                placeholder="Rechercher un article ou code (ex: Riz, Sucre, EAN-13, SKU...)"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && searchQuery.trim() !== '') {
-                    const searchLower = searchQuery.trim().toLowerCase();
-                    const alts = [searchLower, normalizeBarcode(searchLower).toLowerCase(), searchLower.replace(/[-\s._]/g, '')];
-                    
-                    const exactSkuMatch = products.find(
-                      p => !p.archived && (
-                        alts.includes(p.sku.toLowerCase().trim()) || 
-                        (p.barcode && alts.includes(p.barcode.toLowerCase().trim())) ||
-                        alts.includes(p.sku.toLowerCase().replace(/[-\s._]/g, '')) ||
-                        (p.barcode && alts.includes(p.barcode.toLowerCase().replace(/[-\s._]/g, '')))
-                      )
-                    );
-                    
-                    if (exactSkuMatch) {
-                      if (exactSkuMatch.currentStock > 0) {
-                        addToCart(exactSkuMatch, 1);
-                        usbBarcodeScanner.playBeep();
-                        setSearchQuery('');
-                        setScanToast({
-                          type: 'success',
-                          title: exactSkuMatch.name,
-                          subtitle: `+1 ajouté au panier (${exactSkuMatch.salePrice.toLocaleString('fr-FR')} ${business.currency})`,
-                          timestamp: Date.now()
-                        });
-                      } else {
-                        usbBarcodeScanner.playError();
-                        setScanToast({
-                          type: 'warning',
-                          title: `Stock épuisé : ${exactSkuMatch.name}`,
-                          subtitle: `Stock actuel : 0 ${exactSkuMatch.unit}`,
-                          timestamp: Date.now()
-                        });
-                      }
-                    } else if (filteredProducts.length === 1 && filteredProducts[0].currentStock > 0) {
-                      addToCart(filteredProducts[0], 1);
+          <div className="relative flex-1">
+            <Search className="h-4 w-4 sm:h-5 sm:w-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            <input
+              id="input-search-product"
+              type="text"
+              placeholder="Rechercher un article ou code (ex: Riz, Sucre, W572, EAN-13, SKU...)"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && searchQuery.trim() !== '') {
+                  const searchLower = searchQuery.trim().toLowerCase();
+                  const alts = [searchLower, normalizeBarcode(searchLower).toLowerCase(), searchLower.replace(/[-\s._]/g, '')];
+                  
+                  const exactSkuMatch = products.find(
+                    p => !p.archived && (
+                      alts.includes(p.sku.toLowerCase().trim()) || 
+                      (p.barcode && alts.includes(p.barcode.toLowerCase().trim())) ||
+                      alts.includes(p.sku.toLowerCase().replace(/[-\s._]/g, '')) ||
+                      (p.barcode && alts.includes(p.barcode.toLowerCase().replace(/[-\s._]/g, '')))
+                    )
+                  );
+                  
+                  if (exactSkuMatch) {
+                    if (exactSkuMatch.currentStock > 0) {
+                      addToCart(exactSkuMatch, 1);
                       usbBarcodeScanner.playBeep();
                       setSearchQuery('');
                       setScanToast({
                         type: 'success',
-                        title: filteredProducts[0].name,
-                        subtitle: `+1 ajouté au panier (${filteredProducts[0].salePrice.toLocaleString('fr-FR')} ${business.currency})`,
+                        title: exactSkuMatch.name,
+                        subtitle: `+1 ajouté au panier (${exactSkuMatch.salePrice.toLocaleString('fr-FR')} ${business.currency})`,
+                        timestamp: Date.now()
+                      });
+                    } else {
+                      usbBarcodeScanner.playError();
+                      setScanToast({
+                        type: 'warning',
+                        title: `Stock épuisé : ${exactSkuMatch.name}`,
+                        subtitle: `Stock actuel : 0 ${exactSkuMatch.unit}`,
                         timestamp: Date.now()
                       });
                     }
+                  } else if (filteredProducts.length === 1 && filteredProducts[0].currentStock > 0) {
+                    addToCart(filteredProducts[0], 1);
+                    usbBarcodeScanner.playBeep();
+                    setSearchQuery('');
+                    setScanToast({
+                      type: 'success',
+                      title: filteredProducts[0].name,
+                      subtitle: `+1 ajouté au panier (${filteredProducts[0].salePrice.toLocaleString('fr-FR')} ${business.currency})`,
+                      timestamp: Date.now()
+                    });
                   }
-                }}
-                className="w-full bg-white border border-slate-200 rounded-l-xl pl-9 pr-4 py-2 text-xs sm:text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-xs"
-              />
+                }
+              }}
+              className="w-full bg-white border border-slate-200 rounded-2xl pl-10 sm:pl-11 pr-24 py-2.5 sm:py-3 text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-xs font-medium transition"
+            />
+
+            {/* In-bar Controls (Clear text & Quick Mic voice button) */}
+            <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center space-x-1">
               {searchQuery && (
                 <button
+                  type="button"
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600"
+                  className="px-2 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
                 >
                   Effacer
                 </button>
               )}
+              <button
+                id="btn-voice-command-trigger"
+                type="button"
+                onClick={() => setShowVoiceModal(true)}
+                className="p-1.5 sm:p-2 rounded-xl text-rose-500 hover:text-white hover:bg-rose-500 bg-rose-50 transition cursor-pointer flex items-center space-x-1"
+                title="Commande vocale (Micro) : Ajoutez des articles ou encaissez au son de la voix (Alt+V ou Ctrl+M)"
+              >
+                <Mic className="h-4 w-4" />
+              </button>
             </div>
-
-            {/* Camera Barcode Scanner trigger */}
-            <button
-              onClick={() => setShowScanner(true)}
-              className="bg-white hover:bg-slate-50 border border-l-0 border-slate-200 px-3 flex items-center justify-center text-slate-600 hover:text-slate-900 transition shadow-xs"
-              title="Scanner un code-barres via la caméra"
-            >
-              <ScanBarcode className="h-4 w-4" />
-            </button>
-
-            {/* USB Scanner Keyboard Wedge Indicator & Diagnostic modal */}
-            <button
-              id="btn-usb-scanner-trigger"
-              type="button"
-              onClick={() => {
-                if (!isWindowFocused) {
-                  usbBarcodeScanner.focusApplication();
-                  setIsWindowFocused(true);
-                } else {
-                  setShowUsbScannerModal(true);
-                }
-              }}
-              className={`border border-l-0 px-2.5 sm:px-3 flex items-center justify-center space-x-1.5 transition shadow-xs cursor-pointer ${
-                !isWindowFocused
-                  ? 'bg-amber-100 hover:bg-amber-200 border-amber-300 text-amber-900 animate-pulse'
-                  : Date.now() - lastScanPulse < 1500
-                  ? 'bg-emerald-100 border-emerald-400 text-emerald-900 ring-2 ring-emerald-400/40'
-                  : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700 hover:text-blue-600'
-              }`}
-              title={
-                !isWindowFocused
-                  ? 'Fenêtre en veille : Cliquez ici pour réactiver le scan de votre douchette USB'
-                  : 'Douchette USB prête & active : Cliquez pour ouvrir le diagnostic et les codes de réglage'
-              }
-            >
-              <Keyboard className={`h-4 w-4 ${!isWindowFocused ? 'text-amber-600' : 'text-slate-600'}`} />
-              <span className={`w-2 h-2 rounded-full ${
-                !isWindowFocused 
-                  ? 'bg-amber-500 animate-ping' 
-                  : Date.now() - lastScanPulse < 1500 
-                  ? 'bg-emerald-500 scale-125' 
-                  : 'bg-emerald-500 animate-pulse'
-              }`}></span>
-              <span className="hidden md:inline text-[11px] font-bold">
-                {!isWindowFocused ? 'Cliquez pour scanner' : 'Douchette USB'}
-              </span>
-            </button>
-
-            {/* Voice Command Trigger (Microphone) */}
-            <button
-              id="btn-voice-command-trigger"
-              type="button"
-              onClick={() => setShowVoiceModal(true)}
-              className="border border-l-0 rounded-r-xl px-2.5 sm:px-3 flex items-center justify-center space-x-1.5 transition shadow-xs cursor-pointer bg-white hover:bg-rose-50 border-slate-200 text-slate-700 hover:text-rose-600 group"
-              title="Commande vocale (Micro) : Ajoutez des articles ou encaissez au son de la voix (Raccourci: Alt+V ou Ctrl+M)"
-            >
-              <Mic className="h-4 w-4 text-rose-500 group-hover:scale-110 transition-transform" />
-              <span className="w-2 h-2 rounded-full bg-rose-500 group-hover:animate-ping"></span>
-              <span className="hidden md:inline text-[11px] font-bold text-slate-700 group-hover:text-rose-700">
-                Commande Vocale
-              </span>
-            </button>
           </div>
-
-          {/* Cash Drawer Quick Trigger & Config */}
-          <button
-            id="btn-cash-drawer-trigger"
-            onClick={() => setShowCashDrawerModal(true)}
-            className={`flex items-center space-x-1.5 border px-3 py-2 rounded-xl text-xs font-bold shadow-xs transition shrink-0 cursor-pointer ${
-              drawerToast 
-                ? 'bg-amber-500 text-white border-amber-600 animate-pulse' 
-                : 'bg-amber-50 border-amber-300 hover:bg-amber-100 text-amber-900'
-            }`}
-            title="Gestion et ouverture automatique du tiroir-caisse"
-          >
-            <Unlock className="h-4 w-4 text-amber-600" />
-            <span className="hidden sm:inline">Tiroir Caisse</span>
-          </button>
 
           {/* 2nd Screen / Customer Display Quick Button */}
           <button
