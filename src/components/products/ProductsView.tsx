@@ -19,8 +19,11 @@ import {
   ArrowUpDown,
   DollarSign,
   ScanBarcode,
-  Barcode
+  Barcode,
+  Zap,
+  Sparkles
 } from 'lucide-react';
+import { BatchBarcodeModal } from './BatchBarcodeModal';
 
 export const PRESET_UNITS = [
   'Pièce',
@@ -58,17 +61,18 @@ export const CUSTOM_UNIT_SUGGESTIONS = [
 ];
 
 export const ProductsView: React.FC = () => {
-  const { products, addProduct, updateProduct, archiveProduct, business, currentUser, recordStockMovement } = useApp();
+  const { products, addProduct, updateProduct, batchUpdateProducts, archiveProduct, business, currentUser, recordStockMovement } = useApp();
 
   const isOwner = currentUser.role === 'owner' || currentUser.role === 'admin';
   const isStockManager = currentUser.role === 'stock_manager' || isOwner;
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Tous');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'in_stock' | 'low_stock' | 'out_of_stock' | 'archived'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'in_stock' | 'low_stock' | 'out_of_stock' | 'archived' | 'without_barcode'>('all');
 
-  // Modal State for Add / Edit
+  // Modal State for Add / Edit / Batch Barcode
   const [showModal, setShowModal] = useState(false);
+  const [showBatchBarcodeModal, setShowBatchBarcodeModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
 
   // Form State
@@ -239,6 +243,11 @@ export const ProductsView: React.FC = () => {
     setRestockProduct(null);
   };
 
+  // Products without barcodes count
+  const countWithoutBarcode = useMemo(() => {
+    return products.filter(p => !p.archived && (!p.barcode || p.barcode.trim() === '')).length;
+  }, [products]);
+
   // Filtered Products
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
@@ -250,6 +259,7 @@ export const ProductsView: React.FC = () => {
         if (statusFilter === 'in_stock' && p.currentStock <= 0) return false;
         if (statusFilter === 'low_stock' && (p.currentStock <= 0 || p.currentStock > p.alertThreshold)) return false;
         if (statusFilter === 'out_of_stock' && p.currentStock > 0) return false;
+        if (statusFilter === 'without_barcode' && p.barcode && p.barcode.trim() !== '') return false;
       }
 
       // Category filter
@@ -283,17 +293,63 @@ export const ProductsView: React.FC = () => {
 
         <div className="flex items-center space-x-2">
           {isStockManager && (
-            <button
-              id="btn-add-product"
-              onClick={handleOpenAdd}
-              className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm shadow-xs transition"
-            >
-              <Plus className="h-4 w-4" />
-              <span>Ajouter un Produit</span>
-            </button>
+            <>
+              <button
+                id="btn-batch-barcodes"
+                type="button"
+                onClick={() => setShowBatchBarcodeModal(true)}
+                className="flex items-center space-x-2 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 active:scale-98 text-white px-3.5 sm:px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm shadow-xs transition cursor-pointer"
+                title="Lier tous les articles existants à leur code-barres en un clic"
+              >
+                <Barcode className="h-4 w-4" />
+                <span className="hidden sm:inline">Lier les Codes-Barres</span>
+                <span className="sm:hidden">Codes-Barres</span>
+                {countWithoutBarcode > 0 && (
+                  <span className="px-1.5 py-0.5 bg-amber-400 text-slate-900 rounded-full text-[10px] font-black leading-none ml-0.5">
+                    {countWithoutBarcode} à lier
+                  </span>
+                )}
+              </button>
+
+              <button
+                id="btn-add-product"
+                onClick={handleOpenAdd}
+                className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm shadow-xs transition cursor-pointer"
+              >
+                <Plus className="h-4 w-4" />
+                <span>Ajouter un Produit</span>
+              </button>
+            </>
           )}
         </div>
       </div>
+
+      {/* 1-Click Barcode Linking Alert Banner */}
+      {countWithoutBarcode > 0 && (
+        <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 p-3 sm:p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+          <div className="flex items-center space-x-3">
+            <div className="p-2 bg-amber-100 text-amber-800 rounded-xl shrink-0">
+              <AlertTriangle className="h-5 w-5 text-amber-600" />
+            </div>
+            <div>
+              <p className="text-xs sm:text-sm font-bold text-amber-950">
+                {countWithoutBarcode} article{countWithoutBarcode > 1 ? 's n\'ont' : ' n\'a'} pas encore de code-barres
+              </p>
+              <p className="text-[11px] text-amber-700 mt-0.5">
+                Vous pouvez lier automatiquement tous ces articles à leur modèle ou générer des codes en 1 clic.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowBatchBarcodeModal(true)}
+            className="px-4 py-2 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center space-x-1.5 shrink-0 cursor-pointer"
+          >
+            <Zap className="h-3.5 w-3.5" />
+            <span>Lier en 1 Clic ⚡</span>
+          </button>
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
@@ -345,6 +401,14 @@ export const ProductsView: React.FC = () => {
               }`}
             >
               Tous ({products.filter(p => !p.archived).length})
+            </button>
+            <button
+              onClick={() => setStatusFilter('without_barcode')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
+                statusFilter === 'without_barcode' ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-800 hover:bg-indigo-100'
+              }`}
+            >
+              Sans code ({countWithoutBarcode})
             </button>
             <button
               onClick={() => setStatusFilter('low_stock')}
@@ -964,6 +1028,16 @@ export const ProductsView: React.FC = () => {
           onClose={() => setShowScanner(false)}
         />
       )}
+
+      {/* 1-CLICK BATCH BARCODE LINKING MODAL */}
+      <BatchBarcodeModal
+        isOpen={showBatchBarcodeModal}
+        onClose={() => setShowBatchBarcodeModal(false)}
+        products={products}
+        businessCurrency={business.currency}
+        businessName={business.name}
+        onBatchUpdate={batchUpdateProducts}
+      />
     </div>
   );
 };

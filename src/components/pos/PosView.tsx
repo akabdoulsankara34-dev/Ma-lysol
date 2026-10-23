@@ -39,6 +39,11 @@ import {
   Keyboard,
   CheckCircle2,
   Barcode,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
+  Radio,
   X
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
@@ -46,6 +51,8 @@ import { cashDrawerService } from '../../lib/cashDrawerService';
 import { CashDrawerModal } from './CashDrawerModal';
 import { CancelSaleModal } from './CancelSaleModal';
 import { UsbScannerModal } from './UsbScannerModal';
+import { VoiceCommandModal } from './VoiceCommandModal';
+import { BatchBarcodeModal } from '../products/BatchBarcodeModal';
 import { usbBarcodeScanner, normalizeBarcode, LastScanInfo } from '../../lib/usbBarcodeScanner';
 
 export const PosView: React.FC = () => {
@@ -55,7 +62,7 @@ export const PosView: React.FC = () => {
     addToCart, 
     updateCartQuantity, 
     updateCartItemDiscount, 
-    updateCartItemPriceType,
+    updateCartItemPriceType, 
     removeFromCart, 
     clearCart,
     business,
@@ -66,7 +73,8 @@ export const PosView: React.FC = () => {
     setActiveTab,
     summary,
     avoirs,
-    updateProduct
+    updateProduct,
+    batchUpdateProducts
   } = useApp();
 
   const [mobilePosTab, setMobilePosTab] = useState<'catalog' | 'cart'>('catalog');
@@ -76,6 +84,7 @@ export const PosView: React.FC = () => {
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [showUsbScannerModal, setShowUsbScannerModal] = useState(false);
+  const [showBatchBarcodeModalPos, setShowBatchBarcodeModalPos] = useState(false);
   const [isWindowFocused, setIsWindowFocused] = useState<boolean>(true);
   const [lastScanPulse, setLastScanPulse] = useState<number>(0);
   const [unassignedBarcodeModal, setUnassignedBarcodeModal] = useState<{ code: string; info: LastScanInfo } | null>(null);
@@ -95,7 +104,26 @@ export const PosView: React.FC = () => {
   const [isQuickCheckingOut, setIsQuickCheckingOut] = useState(false);
   const [showCashDrawerModal, setShowCashDrawerModal] = useState(false);
   const [drawerToast, setDrawerToast] = useState<{ reason: string; timestamp: number; hardwareKicked: boolean } | null>(null);
+  const [showVoiceModal, setShowVoiceModal] = useState(false);
+  const [voiceTtsEnabled, setVoiceTtsEnabled] = useState(true);
+  const [voiceContinuousMode, setVoiceContinuousMode] = useState(false);
   const customerDisplayWindowRef = useRef<Window | null>(null);
+
+  // Keyboard shortcut listener (Alt+V or Ctrl+M triggers Voice Command modal)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isInput = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+
+      if ((e.altKey && (e.key === 'v' || e.key === 'V')) || (e.ctrlKey && (e.key === 'm' || e.key === 'M'))) {
+        e.preventDefault();
+        setShowVoiceModal(prev => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Close customer display window when leaving the POS view or closing browser tab
   useEffect(() => {
@@ -576,7 +604,7 @@ export const PosView: React.FC = () => {
                   setShowUsbScannerModal(true);
                 }
               }}
-              className={`border border-l-0 rounded-r-xl px-2.5 sm:px-3 flex items-center justify-center space-x-1.5 transition shadow-xs cursor-pointer ${
+              className={`border border-l-0 px-2.5 sm:px-3 flex items-center justify-center space-x-1.5 transition shadow-xs cursor-pointer ${
                 !isWindowFocused
                   ? 'bg-amber-100 hover:bg-amber-200 border-amber-300 text-amber-900 animate-pulse'
                   : Date.now() - lastScanPulse < 1500
@@ -599,6 +627,21 @@ export const PosView: React.FC = () => {
               }`}></span>
               <span className="hidden md:inline text-[11px] font-bold">
                 {!isWindowFocused ? 'Cliquez pour scanner' : 'Douchette USB'}
+              </span>
+            </button>
+
+            {/* Voice Command Trigger (Microphone) */}
+            <button
+              id="btn-voice-command-trigger"
+              type="button"
+              onClick={() => setShowVoiceModal(true)}
+              className="border border-l-0 rounded-r-xl px-2.5 sm:px-3 flex items-center justify-center space-x-1.5 transition shadow-xs cursor-pointer bg-white hover:bg-rose-50 border-slate-200 text-slate-700 hover:text-rose-600 group"
+              title="Commande vocale (Micro) : Ajoutez des articles ou encaissez au son de la voix (Raccourci: Alt+V ou Ctrl+M)"
+            >
+              <Mic className="h-4 w-4 text-rose-500 group-hover:scale-110 transition-transform" />
+              <span className="w-2 h-2 rounded-full bg-rose-500 group-hover:animate-ping"></span>
+              <span className="hidden md:inline text-[11px] font-bold text-slate-700 group-hover:text-rose-700">
+                Commande Vocale
               </span>
             </button>
           </div>
@@ -843,9 +886,17 @@ export const PosView: React.FC = () => {
             <div className="h-48 lg:h-64 flex flex-col items-center justify-center text-slate-400 text-center p-3">
               <ShoppingBag className="h-8 w-8 mb-2 opacity-30 text-slate-400" />
               <p className="text-xs font-bold text-slate-700">Le panier est vide</p>
-              <p className="text-[11px] text-slate-400 mt-1 max-w-[180px]">
-                Sélectionnez un article du catalogue pour l'ajouter.
+              <p className="text-[11px] text-slate-400 mt-1 max-w-[200px]">
+                Sélectionnez un article, scannez avec la douchette ou parlez au micro.
               </p>
+              <button
+                type="button"
+                onClick={() => setShowVoiceModal(true)}
+                className="mt-3 flex items-center space-x-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition shadow-2xs cursor-pointer"
+              >
+                <Mic className="h-3.5 w-3.5 text-rose-500" />
+                <span>Commande vocale</span>
+              </button>
             </div>
           ) : (
             cart.map(item => {
@@ -1394,17 +1445,30 @@ export const PosView: React.FC = () => {
             </div>
 
             {/* Footer */}
-            <div className="pt-2 border-t border-slate-200 flex items-center justify-between shrink-0 text-xs">
-              <button
-                type="button"
-                onClick={() => {
-                  setUnassignedBarcodeModal(null);
-                  setActiveTab('products');
-                }}
-                className="text-blue-600 hover:text-blue-800 font-bold flex items-center space-x-1 cursor-pointer"
-              >
-                <span>+ Créer un nouvel article avec ce code</span>
-              </button>
+            <div className="pt-2 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUnassignedBarcodeModal(null);
+                    setShowBatchBarcodeModalPos(true);
+                  }}
+                  className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-lg flex items-center space-x-1 cursor-pointer transition"
+                >
+                  <Zap className="h-3.5 w-3.5 text-indigo-600" />
+                  <span>Lier tous les articles en 1 Clic ⚡</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUnassignedBarcodeModal(null);
+                    setActiveTab('products');
+                  }}
+                  className="text-blue-600 hover:text-blue-800 font-bold flex items-center space-x-1 cursor-pointer"
+                >
+                  <span>+ Créer un nouvel article</span>
+                </button>
+              </div>
               <button
                 type="button"
                 onClick={() => setUnassignedBarcodeModal(null)}
@@ -1422,6 +1486,83 @@ export const PosView: React.FC = () => {
       <UsbScannerModal
         isOpen={showUsbScannerModal}
         onClose={() => setShowUsbScannerModal(false)}
+      />
+
+      {/* Voice Command POS Assistant Modal */}
+      <VoiceCommandModal
+        isOpen={showVoiceModal}
+        onClose={() => setShowVoiceModal(false)}
+        products={products}
+        onAddToCart={(product, quantity) => {
+          const isZeroStock = product.currentStock <= 0;
+          addToCart(product, quantity);
+          try {
+            confetti({
+              particleCount: 25,
+              spread: 40,
+              origin: { y: 0.85 }
+            });
+          } catch {}
+
+          if (isZeroStock) {
+            setScanToast({
+              type: 'warning',
+              title: `🎤 Ajouté : ${product.name} (+${quantity})`,
+              subtitle: `Attention : Stock informatique actuellement à 0 ${product.unit}. Vente autorisée en caisse.`,
+              timestamp: Date.now()
+            });
+            setTimeout(() => setScanToast(null), 5000);
+          } else {
+            setScanToast({
+              type: 'success',
+              title: `🎤 Commande Vocale : ${product.name}`,
+              subtitle: `+${quantity} ajouté(s) au panier (Total : ${(product.salePrice * quantity).toLocaleString('fr-FR')} ${business.currency})`,
+              timestamp: Date.now()
+            });
+            setTimeout(() => setScanToast(null), 4000);
+          }
+        }}
+        onRemoveFromCart={(productId) => {
+          removeFromCart(productId);
+          setScanToast({
+            type: 'warning',
+            title: '🎤 Article retiré',
+            subtitle: 'Le produit a été retiré du panier.',
+            timestamp: Date.now()
+          });
+          setTimeout(() => setScanToast(null), 3500);
+        }}
+        onClearCart={() => {
+          clearCart();
+          setOverallDiscount(0);
+          setScanToast({
+            type: 'warning',
+            title: '🎤 Panier vidé',
+            subtitle: 'Le panier est réinitialisé.',
+            timestamp: Date.now()
+          });
+          setTimeout(() => setScanToast(null), 3000);
+        }}
+        onCheckout={() => {
+          setShowVoiceModal(false);
+          if (cart.length > 0) {
+            setShowCheckoutModal(true);
+          }
+        }}
+        voiceTtsEnabled={voiceTtsEnabled}
+        setVoiceTtsEnabled={setVoiceTtsEnabled}
+        continuousMode={voiceContinuousMode}
+        setContinuousMode={setVoiceContinuousMode}
+      />
+
+      {/* 1-CLICK BATCH BARCODE LINKING MODAL AT POS */}
+      <BatchBarcodeModal
+        isOpen={showBatchBarcodeModalPos}
+        onClose={() => setShowBatchBarcodeModalPos(false)}
+        products={products}
+        businessCurrency={business.currency}
+        businessName={business.name}
+        onBatchUpdate={batchUpdateProducts}
       />
     </div>
   );

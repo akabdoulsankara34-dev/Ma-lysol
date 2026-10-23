@@ -131,6 +131,7 @@ interface AppContextType {
   products: Product[];
   addProduct: (productData: Omit<Product, 'id' | 'businessId' | 'createdAt'>) => Promise<Product>;
   updateProduct: (id: string, updates: Partial<Product>) => Promise<void>;
+  batchUpdateProducts: (updatesList: { id: string; updates: Partial<Product> }[]) => Promise<void>;
   archiveProduct: (id: string) => Promise<void>;
   recordStockMovement: (
     productId: string,
@@ -2053,6 +2054,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await syncMutation('products', id, 'update', updates, `Modification produit ${id}`);
   };
 
+  // Batch Update Products (e.g. 1-click batch barcode linking)
+  const batchUpdateProducts = async (updatesList: { id: string; updates: Partial<Product> }[]) => {
+    if (updatesList.length === 0) return;
+    const updateMap = new Map<string, Partial<Product>>();
+    updatesList.forEach(item => updateMap.set(item.id, item.updates));
+
+    setProducts(prev =>
+      prev.map(p => {
+        const u = updateMap.get(p.id);
+        return u ? { ...p, ...u } : p;
+      })
+    );
+
+    for (const item of updatesList) {
+      await syncMutation('products', item.id, 'update', item.updates, `Mise à jour en masse ${item.id}`);
+    }
+  };
+
   // Apply Expiry Discount (Anti-Gaspillage)
   const applyExpiryDiscount = async (productId: string, discountPercentage: number) => {
     const product = products.find(p => p.id === productId);
@@ -2831,6 +2850,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         cancelSale,
         addProduct,
         updateProduct,
+        batchUpdateProducts,
         archiveProduct,
         recordStockMovement,
         addCustomer,
