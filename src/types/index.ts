@@ -53,6 +53,7 @@ export interface Business {
   city: string;
   sector: string;
   ifu?: string;
+  rccm?: string;
   currency: string; // e.g. "FCFA"
   receiptFooter?: string;
   address?: string;
@@ -264,7 +265,7 @@ export interface Quotation {
   taxAmount?: number;
   total: number;
   validUntil: string;
-  status: 'draft' | 'sent' | 'converted' | 'cancelled';
+  status: 'draft' | 'sent' | 'accepted' | 'converted' | 'cancelled';
   convertedSaleId?: string;
   notes?: string;
   createdBy: string;

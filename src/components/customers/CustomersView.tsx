@@ -138,7 +138,7 @@ export const CustomersView: React.FC = () => {
     e.preventDefault();
     if (!loyaltyCustomer) return;
 
-    await addLoyaltyPoints(loyaltyCustomer.id, pointsAdjustment);
+    await addLoyaltyPoints(loyaltyCustomer.id, pointsAdjustment, 0);
     setLoyaltyCustomer(null);
     setPointsAdjustment(50);
   };

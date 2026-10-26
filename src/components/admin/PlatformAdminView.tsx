@@ -135,6 +135,7 @@ export const PlatformAdminView: React.FC = () => {
         city: newBizCity.trim(),
         sector: newBizSector.trim(),
         ownerName: newBizOwnerName.trim() || 'Propriétaire',
+        ownerId: 'usr_' + Math.random().toString(36).substring(2, 9),
         accessCode: customAccessCode.trim().toUpperCase() || undefined,
         currency: 'FCFA',
         status: 'active',

@@ -20,6 +20,14 @@ import {
 } from 'lucide-react';
 import { ReceiptModal } from '../pos/ReceiptModal';
 
+import { 
+  getSafeDateString, 
+  isToday, 
+  getSafeDate, 
+  formatDateFr, 
+  formatTimeFr 
+} from '../../lib/dateUtils';
+
 export const CancelledSalesHistory: React.FC = () => {
   const { sales, business, allUsers } = useApp();
   const [searchQuery, setSearchQuery] = useState('');
@@ -34,9 +42,6 @@ export const CancelledSalesHistory: React.FC = () => {
 
   // Apply search and filters
   const filteredCancelledSales = useMemo(() => {
-    const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
-    
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     
@@ -47,12 +52,12 @@ export const CancelledSalesHistory: React.FC = () => {
       // Search query (receiptNumber, customerName, cancellationReason, items)
       const q = searchQuery.toLowerCase().trim();
       const matchSearch = !q || 
-        sale.receiptNumber.toLowerCase().includes(q) ||
+        (sale.receiptNumber && sale.receiptNumber.toLowerCase().includes(q)) ||
         (sale.customerName && sale.customerName.toLowerCase().includes(q)) ||
         (sale.cancellationReason && sale.cancellationReason.toLowerCase().includes(q)) ||
         (sale.cancelledByName && sale.cancelledByName.toLowerCase().includes(q)) ||
         (sale.sellerName && sale.sellerName.toLowerCase().includes(q)) ||
-        sale.items.some(it => it.productName.toLowerCase().includes(q));
+        (sale.items || []).some(it => (it.productName || '').toLowerCase().includes(q));
 
       if (!matchSearch) return false;
 
@@ -63,10 +68,10 @@ export const CancelledSalesHistory: React.FC = () => {
       }
 
       // Period filter (based on cancellation date or creation date)
-      const cancelDate = new Date(sale.cancelledAt || sale.createdAt);
+      const cancelDateVal = sale.cancelledAt || sale.createdAt;
+      const cancelDate = getSafeDate(cancelDateVal);
       if (periodFilter === 'today') {
-        const cancelDateStr = (sale.cancelledAt || sale.createdAt).split('T')[0];
-        if (cancelDateStr !== todayStr) return false;
+        if (!isToday(cancelDateVal)) return false;
       } else if (periodFilter === 'week') {
         if (cancelDate < sevenDaysAgo) return false;
       } else if (periodFilter === 'month') {
@@ -74,22 +79,21 @@ export const CancelledSalesHistory: React.FC = () => {
       }
 
       return true;
-    }).sort((a, b) => new Date(b.cancelledAt || b.createdAt).getTime() - new Date(a.cancelledAt || a.createdAt).getTime());
+    }).sort((a, b) => getSafeDate(b.cancelledAt || b.createdAt).getTime() - getSafeDate(a.cancelledAt || a.createdAt).getTime());
   }, [cancelledSales, searchQuery, selectedUserFilter, periodFilter]);
 
   // Summary Metrics
   const stats = useMemo(() => {
     const totalCount = cancelledSales.length;
-    const totalAmount = cancelledSales.reduce((acc, s) => acc + s.total, 0);
+    const totalAmount = cancelledSales.reduce((acc, s) => acc + (s.total || 0), 0);
     const totalItemsReturned = cancelledSales.reduce((acc, s) => {
-      return acc + s.items.reduce((sum, it) => sum + it.quantity, 0);
+      return acc + (s.items || []).reduce((sum, it) => sum + (it.quantity || 0), 0);
     }, 0);
 
-    const todayStr = new Date().toISOString().split('T')[0];
-    const todayCount = cancelledSales.filter(s => (s.cancelledAt || s.createdAt).startsWith(todayStr)).length;
+    const todayCount = cancelledSales.filter(s => isToday(s.cancelledAt || s.createdAt)).length;
     const todayAmount = cancelledSales
-      .filter(s => (s.cancelledAt || s.createdAt).startsWith(todayStr))
-      .reduce((acc, s) => acc + s.total, 0);
+      .filter(s => isToday(s.cancelledAt || s.createdAt))
+      .reduce((acc, s) => acc + (s.total || 0), 0);
 
     return {
       totalCount,

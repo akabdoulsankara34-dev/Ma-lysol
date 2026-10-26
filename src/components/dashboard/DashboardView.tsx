@@ -23,6 +23,13 @@ import {
 import { RemoteLiveMonitor } from './RemoteLiveMonitor';
 import { CancelledSalesHistory } from './CancelledSalesHistory';
 
+import { 
+  getSafeDateString, 
+  isToday, 
+  getSafeDate, 
+  formatDateFr 
+} from '../../lib/dateUtils';
+
 export const DashboardView: React.FC = () => {
   const { 
     sales, 
@@ -41,9 +48,6 @@ export const DashboardView: React.FC = () => {
 
   // Filter dates for standard KPI cards
   const filteredData = useMemo(() => {
-    const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
-    
     let cutoffDate = new Date();
     if (period === 'today') {
       cutoffDate.setHours(0, 0, 0, 0);
@@ -59,28 +63,30 @@ export const DashboardView: React.FC = () => {
     const cancelledSales = sales.filter(s => s.status === 'cancelled');
 
     const filteredSales = activeSales.filter(s => {
-      if (period === 'today') return s.createdAt.startsWith(todayStr);
-      return new Date(s.createdAt) >= cutoffDate;
+      if (period === 'today') return isToday(s.createdAt);
+      return getSafeDate(s.createdAt) >= cutoffDate;
     });
 
     const filteredCancelledSales = cancelledSales.filter(s => {
-      if (period === 'today') return (s.cancelledAt || s.createdAt).startsWith(todayStr);
-      return new Date(s.cancelledAt || s.createdAt) >= cutoffDate;
+      const cDate = s.cancelledAt || s.createdAt;
+      if (period === 'today') return isToday(cDate);
+      return getSafeDate(cDate) >= cutoffDate;
     });
 
     const filteredExpenses = expenses.filter(e => {
-      if (period === 'today') return e.date.startsWith(todayStr);
-      return new Date(e.date) >= cutoffDate;
+      const expDateVal = e.createdAt || (e as any).date;
+      if (period === 'today') return isToday(expDateVal);
+      return getSafeDate(expDateVal) >= cutoffDate;
     });
 
-    const totalRevenue = filteredSales.reduce((acc, s) => acc + s.total, 0);
-    const totalCostOfGoods = filteredSales.reduce((acc, s) => acc + s.totalCost, 0);
-    const totalExp = filteredExpenses.reduce((acc, e) => acc + e.amount, 0);
+    const totalRevenue = filteredSales.reduce((acc, s) => acc + (s.total || 0), 0);
+    const totalCostOfGoods = filteredSales.reduce((acc, s) => acc + (s.totalCost || 0), 0);
+    const totalExp = filteredExpenses.reduce((acc, e) => acc + (e.amount || 0), 0);
     const grossMargin = totalRevenue - totalCostOfGoods;
     const estimatedNetProfit = grossMargin - totalExp;
 
     const totalCancelledCount = filteredCancelledSales.length;
-    const totalCancelledAmount = filteredCancelledSales.reduce((acc, s) => acc + s.total, 0);
+    const totalCancelledAmount = filteredCancelledSales.reduce((acc, s) => acc + (s.total || 0), 0);
 
     // Payment method breakdown
     const paymentMap: Record<string, number> = {
@@ -92,18 +98,21 @@ export const DashboardView: React.FC = () => {
       split: 0,
     };
     filteredSales.forEach(s => {
-      paymentMap[s.paymentMethod] = (paymentMap[s.paymentMethod] || 0) + s.total;
+      const pMethod = s.paymentMethod || 'cash';
+      paymentMap[pMethod] = (paymentMap[pMethod] || 0) + (s.total || 0);
     });
 
     // Top selling products
     const productSalesMap: Record<string, { name: string; qty: number; revenue: number }> = {};
     filteredSales.forEach(s => {
-      s.items.forEach(item => {
-        if (!productSalesMap[item.productId]) {
-          productSalesMap[item.productId] = { name: item.productName, qty: 0, revenue: 0 };
+      (s.items || []).forEach(item => {
+        if (!item) return;
+        const pId = item.productId || 'unknown';
+        if (!productSalesMap[pId]) {
+          productSalesMap[pId] = { name: item.productName || 'Article', qty: 0, revenue: 0 };
         }
-        productSalesMap[item.productId].qty += item.quantity;
-        productSalesMap[item.productId].revenue += item.subtotal;
+        productSalesMap[pId].qty += (item.quantity || 0);
+        productSalesMap[pId].revenue += (item.subtotal || 0);
       });
     });
     const topProducts = Object.values(productSalesMap)
@@ -113,11 +122,13 @@ export const DashboardView: React.FC = () => {
     // Sales by seller
     const sellerSalesMap: Record<string, { name: string; total: number; count: number }> = {};
     filteredSales.forEach(s => {
-      if (!sellerSalesMap[s.sellerId]) {
-        sellerSalesMap[s.sellerId] = { name: s.sellerName, total: 0, count: 0 };
+      const sellerKey = s.sellerId || s.sellerName || 'unknown';
+      const sellerDisplayName = s.sellerName || 'Vendeur';
+      if (!sellerSalesMap[sellerKey]) {
+        sellerSalesMap[sellerKey] = { name: sellerDisplayName, total: 0, count: 0 };
       }
-      sellerSalesMap[s.sellerId].total += s.total;
-      sellerSalesMap[s.sellerId].count += 1;
+      sellerSalesMap[sellerKey].total += (s.total || 0);
+      sellerSalesMap[sellerKey].count += 1;
     });
     const sellersPerformance = Object.values(sellerSalesMap).sort((a, b) => b.total - a.total);
 
@@ -145,7 +156,7 @@ export const DashboardView: React.FC = () => {
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
+      const dateStr = getSafeDateString(d);
       const label = d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
       weekDays[dateStr] = { date: dateStr, label, revenue: 0, cost: 0, expense: 0, profit: 0 };
     }
@@ -155,41 +166,44 @@ export const DashboardView: React.FC = () => {
 
     sales.forEach(s => {
       if (s.status === 'cancelled') return;
-      const dateStr = s.createdAt.split('T')[0];
+      const dateStr = getSafeDateString(s.createdAt);
+      if (!dateStr) return;
       const monthStr = dateStr.substring(0, 7); // YYYY-MM
       
       // Weekly aggregation
       if (weekDays[dateStr]) {
-        weekDays[dateStr].revenue += s.total;
-        weekDays[dateStr].cost += s.totalCost;
+        weekDays[dateStr].revenue += (s.total || 0);
+        weekDays[dateStr].cost += (s.totalCost || 0);
       }
       
       // Monthly aggregation
       if (!months[monthStr]) {
-        const d = new Date(s.createdAt);
+        const d = getSafeDate(s.createdAt);
         const label = d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
         months[monthStr] = { monthStr, label: label.charAt(0).toUpperCase() + label.slice(1), revenue: 0, cost: 0, expense: 0, profit: 0 };
       }
-      months[monthStr].revenue += s.total;
-      months[monthStr].cost += s.totalCost;
+      months[monthStr].revenue += (s.total || 0);
+      months[monthStr].cost += (s.totalCost || 0);
     });
 
     expenses.forEach(e => {
-      const dateStr = e.createdAt.split('T')[0];
+      const expDateVal = e.createdAt || (e as any).date;
+      const dateStr = getSafeDateString(expDateVal);
+      if (!dateStr) return;
       const monthStr = dateStr.substring(0, 7);
       
       // Weekly
       if (weekDays[dateStr]) {
-        weekDays[dateStr].expense += e.amount;
+        weekDays[dateStr].expense += (e.amount || 0);
       }
       
       // Monthly
       if (!months[monthStr]) {
-        const d = new Date(e.createdAt);
+        const d = getSafeDate(expDateVal);
         const label = d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
         months[monthStr] = { monthStr, label: label.charAt(0).toUpperCase() + label.slice(1), revenue: 0, cost: 0, expense: 0, profit: 0 };
       }
-      months[monthStr].expense += e.amount;
+      months[monthStr].expense += (e.amount || 0);
     });
 
     // Compute Profit
@@ -538,7 +552,7 @@ export const DashboardView: React.FC = () => {
             <div key={idx} className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
               <div className="flex items-center space-x-3">
                 <div className="h-9 w-9 rounded-full bg-slate-800 text-white font-bold flex items-center justify-center text-xs">
-                  {seller.name.charAt(0)}
+                  {(seller.name || 'V').charAt(0).toUpperCase()}
                 </div>
                 <div>
                   <p className="font-bold text-slate-900 text-xs sm:text-sm">{seller.name}</p>

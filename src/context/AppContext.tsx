@@ -39,6 +39,7 @@ import {
   initialAvoirs
 } from '../data/initialDemoData';
 import { soundEffects } from '../lib/sound';
+import { isToday, getSafeDate, getSafeDateString } from '../lib/dateUtils';
 import { db, sanitizeForFirestore, ensureFirebaseAuth } from '../lib/firebase';
 import { 
   collection, 
@@ -741,7 +742,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const lockPlatformAdmin = useCallback(() => {
     setIsPlatformAdminUnlocked(false);
-    setActiveTab(prev => (prev === 'admin' ? 'pos' : prev));
+    setActiveTabRaw(prev => (prev === 'admin' ? 'pos' : prev));
   }, []);
 
   const handleLogoClick = useCallback(() => {
@@ -2679,7 +2680,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Compute live Business Summary for current scoped business
   const summary: BusinessSummary = useMemo(() => {
-    const todayStr = new Date().toISOString().split('T')[0];
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     const thirtyDaysAgo = new Date();
@@ -2697,37 +2697,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     scopedSales.forEach(sale => {
       if (sale.status === 'cancelled') {
         cancelledSalesCount += 1;
-        cancelledSalesAmount += sale.total;
+        cancelledSalesAmount += (sale.total || 0);
         return;
       }
 
-      const saleDate = new Date(sale.createdAt);
-      const saleDateStr = sale.createdAt.split('T')[0];
+      const saleDate = getSafeDate(sale.createdAt);
 
-      if (saleDateStr === todayStr) {
-        todaySales += sale.total;
+      if (isToday(sale.createdAt)) {
+        todaySales += (sale.total || 0);
         todaySalesCount += 1;
-        todayProfit += sale.profit;
+        todayProfit += (sale.profit || 0);
       }
       if (saleDate >= sevenDaysAgo) {
-        weekSales += sale.total;
+        weekSales += (sale.total || 0);
       }
       if (saleDate >= thirtyDaysAgo) {
-        monthSales += sale.total;
-        monthProfit += sale.profit;
+        monthSales += (sale.total || 0);
+        monthProfit += (sale.profit || 0);
       }
     });
 
     let todayExpenses = 0;
     let monthExpenses = 0;
     scopedExpenses.forEach(exp => {
-      const expDate = new Date(exp.createdAt);
-      const expDateStr = exp.createdAt.split('T')[0];
-      if (expDateStr === todayStr) {
-        todayExpenses += exp.amount;
+      const expDateVal = exp.createdAt || (exp as any).date;
+      const expDate = getSafeDate(expDateVal);
+      if (isToday(expDateVal)) {
+        todayExpenses += (exp.amount || 0);
       }
       if (expDate >= thirtyDaysAgo) {
-        monthExpenses += exp.amount;
+        monthExpenses += (exp.amount || 0);
       }
     });
 

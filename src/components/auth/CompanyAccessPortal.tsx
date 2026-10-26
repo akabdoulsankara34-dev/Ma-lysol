@@ -59,8 +59,8 @@ export const CompanyAccessPortal: React.FC = () => {
     setIsLoading(true);
     setErrorMsg(null);
 
-    setTimeout(() => {
-      const result = authenticateBusiness(code);
+    setTimeout(async () => {
+      const result = await authenticateBusiness(code);
       setIsLoading(false);
       if (!result.success) {
         setErrorMsg(result.message || "Code d'accès entreprise invalide.");

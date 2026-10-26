@@ -31,6 +31,14 @@ import { soundEffects } from '../../lib/sound';
 import { Sale } from '../../types';
 import { ReceiptModal } from '../pos/ReceiptModal';
 
+import { 
+  getSafeDateString, 
+  isToday, 
+  getSafeDate, 
+  formatDateFr, 
+  formatTimeFr 
+} from '../../lib/dateUtils';
+
 export const RemoteLiveMonitor: React.FC = () => {
   const { 
     sales, 
@@ -86,22 +94,20 @@ export const RemoteLiveMonitor: React.FC = () => {
 
   // Calculations for Today's Live Statistics
   const todayStats = useMemo(() => {
-    const todayStr = new Date().toISOString().split('T')[0];
-
-    const todayAllSales = sales.filter(s => s.createdAt.startsWith(todayStr));
+    const todayAllSales = sales.filter(s => isToday(s.createdAt));
     const todaySales = todayAllSales.filter(s => s.status !== 'cancelled');
     const todayCancelledSales = todayAllSales.filter(s => s.status === 'cancelled');
-    const todayExpenses = expenses.filter(e => e.createdAt.startsWith(todayStr));
-    const todayCustomerPayments = customerPayments.filter(p => p.createdAt.startsWith(todayStr));
+    const todayExpenses = expenses.filter(e => isToday(e.createdAt || (e as any).date));
+    const todayCustomerPayments = customerPayments.filter(p => isToday(p.createdAt));
 
-    const totalRevenue = todaySales.reduce((acc, s) => acc + s.total, 0);
-    const totalCost = todaySales.reduce((acc, s) => acc + s.totalCost, 0);
-    const totalExp = todayExpenses.reduce((acc, e) => acc + e.amount, 0);
+    const totalRevenue = todaySales.reduce((acc, s) => acc + (s.total || 0), 0);
+    const totalCost = todaySales.reduce((acc, s) => acc + (s.totalCost || 0), 0);
+    const totalExp = todayExpenses.reduce((acc, e) => acc + (e.amount || 0), 0);
     const grossMargin = totalRevenue - totalCost;
     const estimatedNetProfit = grossMargin - totalExp;
 
     const cancelledCount = todayCancelledSales.length;
-    const cancelledAmount = todayCancelledSales.reduce((acc, s) => acc + s.total, 0);
+    const cancelledAmount = todayCancelledSales.reduce((acc, s) => acc + (s.total || 0), 0);
 
     // Payment methods breakdown
     let cashSales = 0;
@@ -111,11 +117,11 @@ export const RemoteLiveMonitor: React.FC = () => {
     let creditSales = 0;
 
     todaySales.forEach(s => {
-      if (s.paymentMethod === 'cash') cashSales += s.total;
-      else if (s.paymentMethod === 'orange_money') orangeMoneySales += s.total;
-      else if (s.paymentMethod === 'moov_money') moovMoneySales += s.total;
-      else if (s.paymentMethod === 'wave_coris') waveCorisSales += s.total;
-      else if (s.paymentMethod === 'credit') creditSales += s.total;
+      if (s.paymentMethod === 'cash') cashSales += (s.total || 0);
+      else if (s.paymentMethod === 'orange_money') orangeMoneySales += (s.total || 0);
+      else if (s.paymentMethod === 'moov_money') moovMoneySales += (s.total || 0);
+      else if (s.paymentMethod === 'wave_coris') waveCorisSales += (s.total || 0);
+      else if (s.paymentMethod === 'credit') creditSales += (s.total || 0);
       else if (s.paymentMethod === 'split' && s.paymentBreakdown) {
         cashSales += s.paymentBreakdown.cash || 0;
         orangeMoneySales += s.paymentBreakdown.orangeMoney || 0;
@@ -128,28 +134,30 @@ export const RemoteLiveMonitor: React.FC = () => {
     // Cash Drawer Reconciliation (Solde Théorique Espèces)
     const cashDebtPaymentsReceived = todayCustomerPayments
       .filter(p => p.paymentMethod === 'cash')
-      .reduce((acc, p) => acc + p.amount, 0);
+      .reduce((acc, p) => acc + (p.amount || 0), 0);
 
     const cashExpensesPaid = todayExpenses
       .filter(e => e.paymentMethod === 'cash')
-      .reduce((acc, e) => acc + e.amount, 0);
+      .reduce((acc, e) => acc + (e.amount || 0), 0);
 
     const theoreticalCashInDrawer = cashSales + cashDebtPaymentsReceived - cashExpensesPaid;
 
     // Cashiers / Sellers Performance Today
     const cashierMap: Record<string, { name: string; total: number; count: number }> = {};
     todaySales.forEach(s => {
-      if (!cashierMap[s.sellerId]) {
-        cashierMap[s.sellerId] = { name: s.sellerName, total: 0, count: 0 };
+      const cId = s.sellerId || s.sellerName || 'unknown';
+      const cName = s.sellerName || 'Caissier';
+      if (!cashierMap[cId]) {
+        cashierMap[cId] = { name: cName, total: 0, count: 0 };
       }
-      cashierMap[s.sellerId].total += s.total;
-      cashierMap[s.sellerId].count += 1;
+      cashierMap[cId].total += (s.total || 0);
+      cashierMap[cId].count += 1;
     });
 
     const cashiersList = Object.values(cashierMap).sort((a, b) => b.total - a.total);
 
     // High Discounts or Sensitive Operations
-    const discountedSales = todaySales.filter(s => s.discount > 0);
+    const discountedSales = todaySales.filter(s => (s.discount || 0) > 0);
     const newCreditSales = todaySales.filter(s => s.paymentMethod === 'credit' || (s.paymentBreakdown?.credit || 0) > 0);
 
     // Stock Alerts
@@ -160,18 +168,20 @@ export const RemoteLiveMonitor: React.FC = () => {
 
     // Time elapsed since last sale
     let lastSaleElapsedText = 'Aucune vente aujourd\'hui';
-    if (todaySales.length > 0) {
+    if (todaySales.length > 0 && todaySales[0]?.createdAt) {
       const lastSaleTime = new Date(todaySales[0].createdAt).getTime();
-      const diffMinutes = Math.floor((currentTime.getTime() - lastSaleTime) / 60000);
-      if (diffMinutes < 1) {
-        lastSaleElapsedText = 'Il y a quelques secondes';
-      } else if (diffMinutes === 1) {
-        lastSaleElapsedText = 'Il y a 1 minute';
-      } else if (diffMinutes < 60) {
-        lastSaleElapsedText = `Il y a ${diffMinutes} minutes`;
-      } else {
-        const hours = Math.floor(diffMinutes / 60);
-        lastSaleElapsedText = `Il y a ${hours}h ${diffMinutes % 60}min`;
+      if (!isNaN(lastSaleTime)) {
+        const diffMinutes = Math.floor((currentTime.getTime() - lastSaleTime) / 60000);
+        if (diffMinutes < 1) {
+          lastSaleElapsedText = 'Il y a quelques secondes';
+        } else if (diffMinutes === 1) {
+          lastSaleElapsedText = 'Il y a 1 minute';
+        } else if (diffMinutes < 60) {
+          lastSaleElapsedText = `Il y a ${diffMinutes} minutes`;
+        } else {
+          const hours = Math.floor(diffMinutes / 60);
+          lastSaleElapsedText = `Il y a ${hours}h ${diffMinutes % 60}min`;
+        }
       }
     }
 
@@ -304,10 +314,10 @@ _Généré en direct par BizPilot Burkina Faso_`;
                 <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
               </div>
               <p className="font-extrabold text-sm text-white">
-                +{newSaleAlert.total.toLocaleString()} {business.currency}
+                +{(newSaleAlert.total || 0).toLocaleString()} {business.currency}
               </p>
               <p className="text-[11px] text-slate-400">
-                Par {newSaleAlert.sellerName} • {newSaleAlert.items.length} article(s)
+                Par {newSaleAlert.sellerName || 'Caissier'} • {(newSaleAlert.items || []).length} article(s)
               </p>
             </div>
           </div>
@@ -574,15 +584,15 @@ _Généré en direct par BizPilot Burkina Faso_`;
                             ? 'bg-blue-600 text-white' 
                             : 'bg-slate-100 text-slate-700'
                       }`}>
-                        #{sale.receiptNumber.split('-').pop() || index + 1}
+                        #{sale.receiptNumber ? (sale.receiptNumber.split('-').pop() || index + 1) : index + 1}
                       </div>
 
                       <div className="space-y-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className={`font-bold text-xs sm:text-sm ${isCancelled ? 'line-through text-slate-400' : 'text-slate-900'}`}>
-                            {sale.receiptNumber}
+                            {sale.receiptNumber || `Ticket #${index + 1}`}
                           </span>
-                          {getMethodBadge(sale.paymentMethod)}
+                          {getMethodBadge(sale.paymentMethod || 'cash')}
                           {isCancelled ? (
                             <span className="bg-red-600 text-white text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase">
                               Annulée
@@ -595,17 +605,17 @@ _Généré en direct par BizPilot Burkina Faso_`;
                         </div>
 
                         <p className={`text-xs ${isCancelled ? 'text-slate-400' : 'text-slate-600'}`}>
-                          {sale.items.map(item => `${item.quantity}x ${item.productName}`).join(' • ')}
+                          {(sale.items || []).map(item => `${item.quantity || 0}x ${item.productName || 'Article'}`).join(' • ') || 'Articles divers'}
                         </p>
 
                         <div className="flex items-center gap-3 text-[11px] text-slate-500 flex-wrap">
-                          <span className="font-medium text-slate-700">Caissier : <strong>{sale.sellerName}</strong></span>
+                          <span className="font-medium text-slate-700">Caissier : <strong>{sale.sellerName || 'Inconnu'}</strong></span>
                           <span>•</span>
                           <span>Client : {sale.customerName || 'Comptoir'}</span>
-                          {sale.discount > 0 && (
+                          {(sale.discount || 0) > 0 && (
                             <>
                               <span>•</span>
-                              <span className="text-red-600 font-bold">Remise: -{sale.discount.toLocaleString()} {business.currency}</span>
+                              <span className="text-red-600 font-bold">Remise: -{(sale.discount || 0).toLocaleString()} {business.currency}</span>
                             </>
                           )}
                         </div>
@@ -660,7 +670,7 @@ _Généré en direct par BizPilot Burkina Faso_`;
                   <div key={idx} className="p-2.5 bg-slate-50 rounded-xl border border-slate-200/80 flex items-center justify-between text-xs">
                     <div className="flex items-center space-x-2.5">
                       <div className="h-7 w-7 rounded-full bg-slate-800 text-white font-bold flex items-center justify-center text-[11px]">
-                        {cashier.name.charAt(0)}
+                        {(cashier.name || 'C').charAt(0).toUpperCase()}
                       </div>
                       <div>
                         <p className="font-bold text-slate-900">{cashier.name}</p>

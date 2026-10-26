@@ -85,7 +85,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       customerName: selectedCustomer?.name,
       customerPhone: selectedCustomer?.phone,
       loyaltyPoints: selectedCustomer?.loyaltyPoints,
-      loyaltyTier: selectedCustomer?.tier
+      loyaltyTier: selectedCustomer?.loyaltyTier
     });
   }, [paymentMethod, receivedAmount, changeToReturn, selectedCustomer]);
 

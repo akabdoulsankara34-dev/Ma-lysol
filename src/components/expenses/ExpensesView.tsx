@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Expense, ExpenseCategory, PaymentMethod } from '../../types';
+import { isToday, getSafeDate } from '../../lib/dateUtils';
 import { 
   Receipt, 
   PlusCircle, 
@@ -42,14 +43,14 @@ export const ExpensesView: React.FC = () => {
   // Total Expenses Metrics
   const todayTotalExpenses = useMemo(() => {
     return expenses
-      .filter(e => e.createdAt.startsWith(todayStr))
-      .reduce((acc, e) => acc + e.amount, 0);
-  }, [expenses, todayStr]);
+      .filter(e => isToday(e.createdAt || (e as any).date))
+      .reduce((acc, e) => acc + (e.amount || 0), 0);
+  }, [expenses]);
 
   const monthTotalExpenses = useMemo(() => {
     return expenses
-      .filter(e => new Date(e.createdAt) >= thirtyDaysAgo)
-      .reduce((acc, e) => acc + e.amount, 0);
+      .filter(e => getSafeDate(e.createdAt || (e as any).date) >= thirtyDaysAgo)
+      .reduce((acc, e) => acc + (e.amount || 0), 0);
   }, [expenses, thirtyDaysAgo]);
 
   const handleSaveExpense = async (e: React.FormEvent) => {

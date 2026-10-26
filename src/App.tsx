@@ -23,6 +23,7 @@ import { BarcodeLabelsView } from './components/labels/BarcodeLabelsView';
 import { InvoicesView } from './components/invoices/InvoicesView';
 import { AvoirsView } from './components/avoirs/AvoirsView';
 import { CustomerDisplayView } from './components/pos/CustomerDisplayView';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 
 const MainLayout: React.FC = () => {
   const { 
@@ -72,26 +73,31 @@ const MainLayout: React.FC = () => {
 
         {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto pb-20 lg:pb-0 bg-slate-50">
-          {activeTab === 'pos' && <PosView />}
-          {activeTab === 'cash_register' && <CashRegisterView />}
-          {activeTab === 'products' && <ProductsView />}
-          {activeTab === 'stock' && (isStockManager ? <StockView /> : <PosView />)}
-          {activeTab === 'expiry' && (isStockManager ? <ExpiryManagementView /> : <PosView />)}
-          {activeTab === 'proformas' && <ProformaInvoicesView />}
-          {activeTab === 'invoices' && <InvoicesView />}
-          {activeTab === 'avoirs' && <AvoirsView />}
-          {activeTab === 'labels' && (isStockManager ? <BarcodeLabelsView /> : <PosView />)}
-          {activeTab === 'customers' && <CustomersView />}
-          {activeTab === 'expenses' && <ExpensesView />}
-          {activeTab === 'dashboard' && (isManager ? <DashboardView /> : <PosView />)}
-          {activeTab === 'settings' && (isOwner ? <SettingsView /> : <PosView />)}
-          {activeTab === 'customer_display' && (
-            <CustomerDisplayView 
-              isStandaloneWindow={false} 
-              onBackToPos={() => setActiveTab('pos')} 
-            />
-          )}
-          {activeTab === 'admin' && (isPlatformAdminUnlocked ? <PlatformAdminView /> : <PosView />)}
+          <ErrorBoundary 
+            fallbackTitle="Interruption d'affichage sur cette page"
+            onReset={() => setActiveTab('pos')}
+          >
+            {activeTab === 'pos' && <PosView />}
+            {activeTab === 'cash_register' && <CashRegisterView />}
+            {activeTab === 'products' && <ProductsView />}
+            {activeTab === 'stock' && (isStockManager ? <StockView /> : <PosView />)}
+            {activeTab === 'expiry' && (isStockManager ? <ExpiryManagementView /> : <PosView />)}
+            {activeTab === 'proformas' && <ProformaInvoicesView />}
+            {activeTab === 'invoices' && <InvoicesView />}
+            {activeTab === 'avoirs' && <AvoirsView />}
+            {activeTab === 'labels' && (isStockManager ? <BarcodeLabelsView /> : <PosView />)}
+            {activeTab === 'customers' && <CustomersView />}
+            {activeTab === 'expenses' && <ExpensesView />}
+            {activeTab === 'dashboard' && (isManager ? <DashboardView /> : <PosView />)}
+            {activeTab === 'settings' && (isOwner ? <SettingsView /> : <PosView />)}
+            {activeTab === 'customer_display' && (
+              <CustomerDisplayView 
+                isStandaloneWindow={false} 
+                onBackToPos={() => setActiveTab('pos')} 
+              />
+            )}
+            {activeTab === 'admin' && (isPlatformAdminUnlocked ? <PlatformAdminView /> : <PosView />)}
+          </ErrorBoundary>
         </main>
       </div>
 
@@ -129,8 +135,10 @@ export default function App() {
   }
 
   return (
-    <AppProvider>
-      <MainLayout />
-    </AppProvider>
+    <ErrorBoundary fallbackTitle="Interruption du système BizPilot">
+      <AppProvider>
+        <MainLayout />
+      </AppProvider>
+    </ErrorBoundary>
   );
 }
