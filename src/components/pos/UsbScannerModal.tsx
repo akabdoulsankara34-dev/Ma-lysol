@@ -26,6 +26,8 @@ import {
   UsbScannerSettings,
   LastScanInfo,
   RawKeyStrokeEvent,
+  isProductBarcodeMatch,
+  stripAimAndControlChars,
 } from '../../lib/usbBarcodeScanner';
 import { useApp } from '../../context/AppContext';
 import { generateCode128Svg } from '../../lib/barcodeGenerator';
@@ -114,29 +116,14 @@ export const UsbScannerModal: React.FC<UsbScannerModalProps> = ({ isOpen, onClos
   };
 
   const findProductForCode = (code: string, alternatives: string[] = []) => {
-    const cClean = code.trim().toLowerCase();
-    const searchKeys = [cClean, ...alternatives.map(a => a.toLowerCase().trim())];
-
-    return products.find(p => {
-      if (p.archived) return false;
-      const pSku = p.sku.toLowerCase().trim();
-      const pBar = p.barcode ? p.barcode.toLowerCase().trim() : '';
-      const pName = p.name.toLowerCase().trim();
-      return searchKeys.some(k => 
-        k === pSku || 
-        k === pBar || 
-        k === pName ||
-        k === pSku.replace(/[-\s._]/g, '') || 
-        (pBar && k === pBar.replace(/[-\s._]/g, '')) ||
-        k === pName.replace(/[-\s._]/g, '')
-      );
-    });
+    return products.find(p => !p.archived && isProductBarcodeMatch(p, code, { alternatives } as any));
   };
 
   const handleAssignBarcodeToProduct = async (product: Product, barcode: string) => {
     try {
-      await updateProduct(product.id, { barcode });
-      setLinkSuccessMsg(`✅ Code "${barcode}" lié avec succès à "${product.name}" !`);
+      const cleanBarcode = stripAimAndControlChars(barcode).trim();
+      await updateProduct(product.id, { barcode: cleanBarcode });
+      setLinkSuccessMsg(`✅ Code "${cleanBarcode}" lié avec succès à "${product.name}" !`);
       setTimeout(() => {
         setLinkingBarcode(null);
         setLinkSuccessMsg(null);

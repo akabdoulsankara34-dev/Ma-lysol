@@ -88,7 +88,9 @@ export interface Product {
   semiWholesalePrice?: number; // Demi-Gros
   discountPrice?: number;
   currentStock: number;
-  alertThreshold: number;
+  alertThreshold: number; // User-defined minimum threshold
+  isPopular?: boolean; // Star/Popular product flag to ensure popular items never run out
+  targetStockBuffer?: number; // Target replenishment stock level
   expiryDate?: string; // YYYY-MM-DD
   batchNumber?: string;
   imageUrl?: string;

@@ -1,4 +1,5 @@
 import { soundEffects } from './sound';
+import { Product } from '../types';
 
 export interface UsbScannerSettings {
   enabled: boolean;
@@ -115,7 +116,7 @@ export function transposeAzertyQwertyLetters(str: string): string {
  * For instance, if an EAN-13 was scanned on an AZERTY keyboard without shift,
  * '&é"\'(-è_çà' becomes '1234567890'.
  */
-export function normalizeBarcode(rawText: string, azertyFix = true): string {
+export function normalizeBarcode(rawText: string, azertyFix = true, convertHyphenTo6 = true): string {
   if (!rawText) return '';
   const trimmed = stripAimAndControlChars(rawText);
 
@@ -123,14 +124,15 @@ export function normalizeBarcode(rawText: string, azertyFix = true): string {
     return trimmed;
   }
 
+  const map = convertHyphenTo6 ? AZERTY_TO_DIGIT : { ...AZERTY_TO_DIGIT, '-': '-' };
   let azertyConverted = '';
   let hasAzertyChar = false;
 
   for (let i = 0; i < trimmed.length; i++) {
     const char = trimmed[i];
-    if (AZERTY_TO_DIGIT[char] !== undefined) {
-      azertyConverted += AZERTY_TO_DIGIT[char];
-      if (char !== AZERTY_TO_DIGIT[char]) {
+    if (map[char] !== undefined) {
+      azertyConverted += map[char];
+      if (char !== map[char]) {
         hasAzertyChar = true;
       }
     } else {
@@ -139,7 +141,7 @@ export function normalizeBarcode(rawText: string, azertyFix = true): string {
   }
 
   // If converting produced digits or resolved AZERTY symbols
-  if (hasAzertyChar && /^\d+$/.test(azertyConverted)) {
+  if (hasAzertyChar) {
     return azertyConverted;
   }
 
@@ -152,25 +154,34 @@ export function normalizeBarcode(rawText: string, azertyFix = true): string {
  */
 export function generateBarcodeAlternatives(raw: string, codeBased = ''): string[] {
   const alts = new Set<string>();
+  if (!raw && !codeBased) return [];
+
   const cleanRaw = (raw || '').trim();
   const strippedRaw = stripAimAndControlChars(cleanRaw);
 
-  const baseCandidates = [cleanRaw, strippedRaw, (codeBased || '').trim()];
+  const baseCandidates = [cleanRaw, strippedRaw, (codeBased || '').trim()].filter(Boolean);
 
   baseCandidates.forEach((cand) => {
-    if (!cand) return;
     alts.add(cand);
     alts.add(cand.toLowerCase());
     alts.add(cand.toUpperCase());
-    alts.add(cand.replace(/[-\s._/]/g, ''));
+    alts.add(cand.replace(/[-\s._/:]/g, ''));
 
-    // AZERTY digit conversion
-    const azerty = normalizeBarcode(cand, true);
-    if (azerty) {
-      alts.add(azerty);
-      alts.add(azerty.toLowerCase());
-      alts.add(azerty.toUpperCase());
-      alts.add(azerty.replace(/[-\s._/]/g, ''));
+    // AZERTY digit conversion (both with hyphen as 6 and with hyphen preserved)
+    const azertyNum = normalizeBarcode(cand, true, true);
+    if (azertyNum && azertyNum !== cand) {
+      alts.add(azertyNum);
+      alts.add(azertyNum.toLowerCase());
+      alts.add(azertyNum.toUpperCase());
+      alts.add(azertyNum.replace(/[-\s._/:]/g, ''));
+    }
+
+    const azertyAlpha = normalizeBarcode(cand, true, false);
+    if (azertyAlpha && azertyAlpha !== cand) {
+      alts.add(azertyAlpha);
+      alts.add(azertyAlpha.toLowerCase());
+      alts.add(azertyAlpha.toUpperCase());
+      alts.add(azertyAlpha.replace(/[-\s._/:]/g, ''));
     }
 
     // Letter transposition (e.g. W572 <-> Z572)
@@ -179,27 +190,175 @@ export function generateBarcodeAlternatives(raw: string, codeBased = ''): string
       alts.add(transposed);
       alts.add(transposed.toLowerCase());
       alts.add(transposed.toUpperCase());
-      alts.add(transposed.replace(/[-\s._/]/g, ''));
+      alts.add(transposed.replace(/[-\s._/:]/g, ''));
 
-      const transposedAzerty = normalizeBarcode(transposed, true);
-      if (transposedAzerty) {
+      const transposedAzerty = normalizeBarcode(transposed, true, false);
+      if (transposedAzerty && transposedAzerty !== transposed) {
         alts.add(transposedAzerty);
         alts.add(transposedAzerty.toLowerCase());
         alts.add(transposedAzerty.toUpperCase());
+        alts.add(transposedAzerty.replace(/[-\s._/:]/g, ''));
       }
     }
   });
 
-  // EAN-13 vs UPC-A: 12-digit code with leading zero & 13-digit code starting with 0
+  // Zero-padding & Zero-stripping on ALL candidates
   Array.from(alts).forEach((val) => {
-    if (/^\d{12}$/.test(val)) {
-      alts.add('0' + val);
-    } else if (/^0\d{12}$/.test(val)) {
-      alts.add(val.substring(1));
+    // 1. Version without leading zeros
+    const unpadded = val.replace(/^0+/, '');
+    if (unpadded && unpadded !== val) {
+      alts.add(unpadded);
+      alts.add(unpadded.toLowerCase());
+      alts.add(unpadded.toUpperCase());
+    }
+
+    // 2. Pure digits variations (EAN-13, UPC-A, GTIN-14, EAN-8)
+    if (/^\d+$/.test(val)) {
+      // 11 digits -> add 0 (UPC-A) and 00 (EAN-13)
+      if (val.length === 11) {
+        alts.add('0' + val);
+        alts.add('00' + val);
+      }
+      // 12 digits -> add 0 (EAN-13) and 00 (GTIN-14)
+      else if (val.length === 12) {
+        alts.add('0' + val);
+        alts.add('00' + val);
+      }
+      // 13 digits starting with 0 -> strip leading 0 (UPC-A)
+      else if (val.length === 13) {
+        if (val.startsWith('0')) alts.add(val.substring(1));
+        alts.add('0' + val); // GTIN-14
+        // Check digit tolerance: first 12 digits
+        alts.add(val.slice(0, 12));
+      }
+      // 14 digits starting with 0 or 00
+      else if (val.length === 14) {
+        if (val.startsWith('00')) alts.add(val.substring(2));
+        if (val.startsWith('0')) alts.add(val.substring(1));
+      }
+      // 8 digits EAN-8
+      else if (val.length === 8) {
+        alts.add(val.slice(0, 7)); // without checksum
+        alts.add('00000' + val);
+      }
     }
   });
 
   return Array.from(alts).filter(Boolean);
+}
+
+/**
+ * Universal, ultra-resilient barcode matching function for products.
+ * Handles:
+ * - UPC-A vs EAN-13 vs GTIN-14 leading zeros (0 vs no 0 vs 00)
+ * - French AZERTY top-row conversion on digits, hyphens, and letters
+ * - Alphanumeric codes, SKUs, and model references (e.g. W572 <-> Z572, MAE-ROB-001)
+ * - Multiple barcodes per product (split by comma, space, slash, semicolon)
+ * - Trailing checksum tolerance (12 vs 13 digits, 7 vs 8 digits)
+ * - Punctuation stripping and casing
+ */
+export function isProductBarcodeMatch(
+  product: Product,
+  scannedCode: string,
+  scanInfo?: LastScanInfo | null
+): boolean {
+  if (!product || !scannedCode) return false;
+
+  // 1. Gather all scanned candidate strings
+  const scanCandidates = new Set<string>();
+  const addScanCand = (s?: string) => {
+    if (!s) return;
+    const clean = s.trim();
+    if (!clean) return;
+    scanCandidates.add(clean.toLowerCase());
+    const strippedPunct = clean.toLowerCase().replace(/[-\s._/:]/g, '');
+    if (strippedPunct) {
+      scanCandidates.add(strippedPunct);
+      const unpadded = strippedPunct.replace(/^0+/, '');
+      if (unpadded) scanCandidates.add(unpadded);
+    }
+  };
+
+  addScanCand(scannedCode);
+  if (scanInfo) {
+    addScanCand(scanInfo.decoded);
+    addScanCand(scanInfo.raw);
+    if (scanInfo.alternatives && scanInfo.alternatives.length > 0) {
+      scanInfo.alternatives.forEach(alt => addScanCand(alt));
+    }
+  }
+
+  // Also expand alternatives dynamically
+  const dynamicAlts = generateBarcodeAlternatives(scannedCode, scanInfo?.raw || '');
+  dynamicAlts.forEach(alt => addScanCand(alt));
+
+  // 2. Gather all product candidate strings (barcode, SKU, name)
+  const productCandidates = new Set<string>();
+  const addProdCand = (s?: string) => {
+    if (!s) return;
+    const clean = s.trim();
+    if (!clean) return;
+    productCandidates.add(clean.toLowerCase());
+    const strippedPunct = clean.toLowerCase().replace(/[-\s._/:]/g, '');
+    if (strippedPunct) {
+      productCandidates.add(strippedPunct);
+      const unpadded = strippedPunct.replace(/^0+/, '');
+      if (unpadded) productCandidates.add(unpadded);
+    }
+
+    // Also expand with alternatives for stored product barcode / SKU
+    const alts = generateBarcodeAlternatives(clean);
+    alts.forEach(a => {
+      productCandidates.add(a.toLowerCase());
+      const pClean = a.toLowerCase().replace(/[-\s._/:]/g, '');
+      if (pClean) {
+        productCandidates.add(pClean);
+        const unp = pClean.replace(/^0+/, '');
+        if (unp) productCandidates.add(unp);
+      }
+    });
+  };
+
+  // Add SKU
+  addProdCand(product.sku);
+
+  // Add Barcode(s) - split by commas, semicolons, slashes, or whitespace if multiple
+  if (product.barcode) {
+    const rawBar = product.barcode.trim();
+    addProdCand(rawBar);
+    const subBars = rawBar.split(/[,;\s|/]+/);
+    subBars.forEach(b => {
+      if (b.trim()) addProdCand(b.trim());
+    });
+  }
+
+  // Add Product Name exact/cleaned match if >= 3 chars
+  if (product.name) {
+    const n = product.name.toLowerCase().trim();
+    productCandidates.add(n);
+    productCandidates.add(n.replace(/[-\s._/:]/g, ''));
+  }
+
+  // 3. Fast Exact / Normalized Set Intersection
+  for (const s of scanCandidates) {
+    if (productCandidates.has(s)) {
+      return true;
+    }
+  }
+
+  // 4. Check digit fuzzy match (1 digit difference at the end for EAN/UPC)
+  for (const s of scanCandidates) {
+    if (s.length >= 7 && /^\d+$/.test(s)) {
+      for (const p of productCandidates) {
+        if (p.length >= 7 && /^\d+$/.test(p)) {
+          if (s.length === p.length + 1 && s.startsWith(p)) return true;
+          if (p.length === s.length + 1 && p.startsWith(s)) return true;
+        }
+      }
+    }
+  }
+
+  return false;
 }
 
 type ScanCallback = (barcode: string, scanInfo: LastScanInfo) => void;
@@ -435,14 +594,17 @@ class UsbBarcodeScannerService {
 
     // Apply AZERTY normalization & AIM stripping
     const strippedRaw = stripAimAndControlChars(rawBarcode);
-    let finalDecoded = normalizeBarcode(strippedRaw || rawBarcode, this.settings.azertyAutoFix);
-    const azertyFixed = finalDecoded !== rawBarcode;
+    let finalDecoded = normalizeBarcode(strippedRaw || rawBarcode, this.settings.azertyAutoFix, true);
 
     if (/^\d+$/.test(codeBasedBarcode) && !/^\d+$/.test(finalDecoded)) {
       finalDecoded = codeBasedBarcode;
     }
+    const azertyFixed = finalDecoded !== rawBarcode;
 
     const alternatives = generateBarcodeAlternatives(rawBarcode, codeBasedBarcode);
+    if (finalDecoded && !alternatives.includes(finalDecoded)) {
+      alternatives.unshift(finalDecoded);
+    }
 
     const scanInfo: LastScanInfo = {
       raw: rawBarcode,

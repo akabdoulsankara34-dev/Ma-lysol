@@ -20,7 +20,7 @@ import {
   Keyboard,
   Info
 } from 'lucide-react';
-import { usbBarcodeScanner } from '../../lib/usbBarcodeScanner';
+import { usbBarcodeScanner, stripAimAndControlChars } from '../../lib/usbBarcodeScanner';
 import { soundEffects } from '../../lib/sound';
 import confetti from 'canvas-confetti';
 
@@ -128,7 +128,7 @@ export const BatchBarcodeModal: React.FC<BatchBarcodeModalProps> = ({
       const targetProduct = productsWithoutBarcode[chronoScanIndex];
       if (!targetProduct) return;
 
-      const cleanCode = scannedCode.trim();
+      const cleanCode = stripAimAndControlChars(scannedCode).trim();
       if (!cleanCode) return;
 
       // Update this product

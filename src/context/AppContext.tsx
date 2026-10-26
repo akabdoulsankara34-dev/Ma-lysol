@@ -1388,8 +1388,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (p.currentStock <= 0) {
           alerts.push({
             id: `notif_stock_zero_${p.id}`,
-            title: `Rupture de Stock : ${p.name}`,
-            message: `Le stock est épuisé (0 ${p.unit}). Prévoyez un réapprovisionnement d'urgence.`,
+            title: p.isPopular ? `🔥 Alerte Rupture Produit Phare : ${p.name}` : `Rupture de Stock : ${p.name}`,
+            message: p.isPopular
+              ? `Le produit populaire ${p.name} est totalement épuisé (0 ${p.unit}) ! Réapprovisionnez immédiatement pour éviter les pertes de ventes.`
+              : `Le stock est épuisé (0 ${p.unit}). Prévoyez un réapprovisionnement d'urgence.`,
             type: 'danger',
             timestamp: new Date().toISOString(),
             read: false,
@@ -1398,8 +1400,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         } else if (p.currentStock <= p.alertThreshold) {
           alerts.push({
             id: `notif_stock_low_${p.id}`,
-            title: `Stock Faible : ${p.name}`,
-            message: `Il ne reste que ${p.currentStock} ${p.unit} (Seuil d'alerte: ${p.alertThreshold}).`,
+            title: p.isPopular ? `🔥 Produit Phare sous le Seuil : ${p.name}` : `Stock Faible : ${p.name}`,
+            message: p.isPopular
+              ? `Le produit populaire ${p.name} est tombé à ${p.currentStock} ${p.unit} (Seuil minimum : ${p.alertThreshold} ${p.unit}). Réapprovisionnez dès maintenant.`
+              : `Il ne reste que ${p.currentStock} ${p.unit} (Seuil d'alerte: ${p.alertThreshold}).`,
             type: 'warning',
             timestamp: new Date().toISOString(),
             read: false,

@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Product } from '../../types';
 import { BarcodeScanner } from '../BarcodeScanner';
-import { usbBarcodeScanner } from '../../lib/usbBarcodeScanner';
+import { usbBarcodeScanner, isProductBarcodeMatch, stripAimAndControlChars } from '../../lib/usbBarcodeScanner';
 import { 
   Search, 
   Plus, 
@@ -88,6 +88,7 @@ export const ProductsView: React.FC = () => {
   const [formSemiWholesalePrice, setFormSemiWholesalePrice] = useState<number>(0);
   const [formCurrentStock, setFormCurrentStock] = useState<number>(0);
   const [formAlertThreshold, setFormAlertThreshold] = useState<number>(5);
+  const [formIsPopular, setFormIsPopular] = useState<boolean>(false);
   const [formSupplier, setFormSupplier] = useState('');
 
   // Scanner State
@@ -97,23 +98,29 @@ export const ProductsView: React.FC = () => {
 
   // USB Barcode Scanner listener on Products / Catalog page
   useEffect(() => {
-    const unsubscribe = usbBarcodeScanner.subscribe((scannedCode) => {
+    const unsubscribe = usbBarcodeScanner.subscribe((scannedCode, scanInfo) => {
       usbBarcodeScanner.playBeep();
+      const cleanCode = stripAimAndControlChars(scanInfo?.decoded || scannedCode).trim();
       if (quickScanProduct) {
-        updateProduct(quickScanProduct.id, { barcode: scannedCode });
+        updateProduct(quickScanProduct.id, { barcode: cleanCode });
         setQuickScanProduct(null);
       } else if (showModal) {
-        setFormBarcode(scannedCode);
-        setFormSku(prev => !prev || prev.startsWith('ART-') ? scannedCode : prev);
+        setFormBarcode(cleanCode);
+        setFormSku(prev => !prev || prev.startsWith('ART-') ? cleanCode : prev);
       } else {
-        setSearchQuery(scannedCode);
+        const match = products.find(p => !p.archived && isProductBarcodeMatch(p, cleanCode, scanInfo));
+        if (match) {
+          setSearchQuery(match.sku || match.barcode || match.name);
+        } else {
+          setSearchQuery(cleanCode);
+        }
       }
     });
 
     return () => {
       unsubscribe();
     };
-  }, [showModal, quickScanProduct, updateProduct]);
+  }, [showModal, quickScanProduct, updateProduct, products]);
 
   // Quick Restock Modal
   const [restockProduct, setRestockProduct] = useState<Product | null>(null);
@@ -155,6 +162,7 @@ export const ProductsView: React.FC = () => {
     setFormSemiWholesalePrice(650);
     setFormCurrentStock(10);
     setFormAlertThreshold(5);
+    setFormIsPopular(false);
     setFormSupplier('');
     setShowModal(true);
   };
@@ -183,6 +191,7 @@ export const ProductsView: React.FC = () => {
     setFormSemiWholesalePrice(p.semiWholesalePrice || p.salePrice);
     setFormCurrentStock(p.currentStock);
     setFormAlertThreshold(p.alertThreshold);
+    setFormIsPopular(!!p.isPopular);
     setFormSupplier(p.supplier || '');
     setShowModal(true);
   };
@@ -208,6 +217,7 @@ export const ProductsView: React.FC = () => {
         wholesalePrice: Number(formWholesalePrice) || undefined,
         semiWholesalePrice: Number(formSemiWholesalePrice) || undefined,
         alertThreshold: Number(formAlertThreshold),
+        isPopular: formIsPopular,
         supplier: formSupplier.trim() || undefined,
       });
     } else {
@@ -223,6 +233,7 @@ export const ProductsView: React.FC = () => {
         semiWholesalePrice: Number(formSemiWholesalePrice) || undefined,
         currentStock: Number(formCurrentStock),
         alertThreshold: Number(formAlertThreshold),
+        isPopular: formIsPopular,
         supplier: formSupplier.trim() || undefined,
         archived: false,
       });
@@ -475,11 +486,30 @@ export const ProductsView: React.FC = () => {
                       {/* Name & SKU */}
                       <td className="py-3 px-4">
                         <div className="flex items-center space-x-2.5">
+                          <button
+                            type="button"
+                            onClick={() => updateProduct(p.id, { isPopular: !p.isPopular })}
+                            className={`p-1 rounded-lg transition shrink-0 cursor-pointer ${
+                              p.isPopular 
+                                ? 'text-amber-500 hover:text-amber-600 bg-amber-50 hover:bg-amber-100' 
+                                : 'text-slate-300 hover:text-amber-400 hover:bg-slate-100'
+                            }`}
+                            title={p.isPopular ? "Produit Populaire (cliquer pour retirer)" : "Marquer comme Produit Populaire (surveillance prioritaire)"}
+                          >
+                            <span className="text-base leading-none">⭐</span>
+                          </button>
                           <div className="h-8 w-8 rounded-lg bg-blue-50 text-blue-700 font-bold flex items-center justify-center text-xs shrink-0 border border-blue-200">
                             {p.name.charAt(0)}
                           </div>
                           <div>
-                            <p className="font-bold text-slate-900 text-xs sm:text-sm">{p.name}</p>
+                            <div className="flex items-center space-x-2">
+                              <p className="font-bold text-slate-900 text-xs sm:text-sm">{p.name}</p>
+                              {p.isPopular && (
+                                <span className="bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[9px] font-black uppercase px-1.5 py-0.2 rounded-full tracking-wider shadow-2xs">
+                                  Populaire
+                                </span>
+                              )}
+                            </div>
                             <div className="flex items-center space-x-2 mt-0.5">
                               <span className="text-[11px] text-slate-400 font-mono">
                                 Réf: {p.sku} • {p.unit}
@@ -822,31 +852,56 @@ export const ProductsView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Initial stock only on creation */}
-              {!editingProduct && (
-                <div className="grid grid-cols-2 gap-3 p-3 bg-blue-50/60 rounded-xl border border-blue-200">
-                  <div>
-                    <label className="block text-xs font-bold text-blue-950 mb-1">Stock Initial</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={formCurrentStock}
-                      onChange={(e) => setFormCurrentStock(Number(e.target.value))}
-                      className="w-full bg-white border border-blue-300 rounded-lg px-2.5 py-1.5 text-xs font-bold"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-blue-950 mb-1">Seuil Alerte Faible</label>
+              {/* Seuil minimum d'alerte et Statut Produit Populaire */}
+              <div className="p-3.5 bg-amber-50/70 rounded-xl border border-amber-200 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {!editingProduct && (
+                    <div>
+                      <label className="block text-xs font-bold text-slate-800 mb-1">Stock Initial</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={formCurrentStock}
+                        onChange={(e) => setFormCurrentStock(Number(e.target.value))}
+                        className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold"
+                      />
+                    </div>
+                  )}
+                  <div className={editingProduct ? 'sm:col-span-2' : ''}>
+                    <label className="block text-xs font-bold text-amber-950 mb-1">
+                      Seuil Minimum d'Alerte (Stock de Sécurité) *
+                    </label>
                     <input
                       type="number"
                       min="1"
+                      required
                       value={formAlertThreshold}
-                      onChange={(e) => setFormAlertThreshold(Number(e.target.value))}
-                      className="w-full bg-white border border-blue-300 rounded-lg px-2.5 py-1.5 text-xs font-bold"
+                      onChange={(e) => setFormAlertThreshold(Math.max(1, Number(e.target.value)))}
+                      className="w-full bg-white border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-black text-amber-950 focus:ring-2 focus:ring-amber-500"
                     />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Un indicateur d'alerte s'allumera dès que le stock descend à ou sous ce seuil.
+                    </p>
                   </div>
                 </div>
-              )}
+
+                <label className="flex items-center space-x-2.5 cursor-pointer pt-2 border-t border-amber-200/60">
+                  <input
+                    type="checkbox"
+                    checked={formIsPopular}
+                    onChange={(e) => setFormIsPopular(e.target.checked)}
+                    className="h-4 w-4 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-slate-900 flex items-center gap-1">
+                      ⭐ Produit Populaire / Phare (Ne jamais tomber en rupture)
+                    </span>
+                    <p className="text-[10px] text-slate-500">
+                      Active une surveillance renforcée et des alertes prioritaires dans la gestion des stocks.
+                    </p>
+                  </div>
+                </label>
+              </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">Fournisseur (Facultatif)</label>

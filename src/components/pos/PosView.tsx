@@ -53,7 +53,7 @@ import { CancelSaleModal } from './CancelSaleModal';
 import { UsbScannerModal } from './UsbScannerModal';
 import { VoiceCommandModal } from './VoiceCommandModal';
 import { BatchBarcodeModal } from '../products/BatchBarcodeModal';
-import { usbBarcodeScanner, normalizeBarcode, LastScanInfo } from '../../lib/usbBarcodeScanner';
+import { usbBarcodeScanner, normalizeBarcode, LastScanInfo, isProductBarcodeMatch, stripAimAndControlChars } from '../../lib/usbBarcodeScanner';
 
 export const PosView: React.FC = () => {
   const { 
@@ -380,31 +380,8 @@ export const PosView: React.FC = () => {
     const unsubscribeScan = usbBarcodeScanner.subscribe((scannedCode, scanInfo) => {
       setLastScanPulse(Date.now());
 
-      // Look up product by checking all normalized alternatives (raw, AZERTY fixed, code-based, sanitized)
-      const match = products.find(p => {
-        if (p.archived) return false;
-        const pSku = p.sku.toLowerCase().trim();
-        const pSkuClean = pSku.replace(/[-\s._]/g, '');
-        const pBar = p.barcode ? p.barcode.toLowerCase().trim() : '';
-        const pBarClean = pBar.replace(/[-\s._]/g, '');
-        const pBarNorm = p.barcode ? normalizeBarcode(p.barcode).toLowerCase().trim() : '';
-        const pName = p.name.toLowerCase().trim();
-        const pNameClean = pName.replace(/[-\s._]/g, '');
-
-        return scanInfo.alternatives.some(alt => {
-          const a = alt.toLowerCase().trim();
-          const aClean = a.replace(/[-\s._]/g, '');
-          return (
-            a === pSku ||
-            a === pBar ||
-            a === pBarNorm ||
-            a === pName ||
-            aClean === pSkuClean ||
-            (pBarClean && aClean === pBarClean) ||
-            aClean === pNameClean
-          );
-        });
-      });
+      // Look up product by checking all normalized alternatives (raw, AZERTY fixed, code-based, sanitized, zero-padded)
+      const match = products.find(p => !p.archived && isProductBarcodeMatch(p, scannedCode, scanInfo));
 
       if (match) {
         if (match.currentStock > 0) {
@@ -539,16 +516,8 @@ export const PosView: React.FC = () => {
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && searchQuery.trim() !== '') {
-                  const searchLower = searchQuery.trim().toLowerCase();
-                  const alts = [searchLower, normalizeBarcode(searchLower).toLowerCase(), searchLower.replace(/[-\s._]/g, '')];
-                  
                   const exactSkuMatch = products.find(
-                    p => !p.archived && (
-                      alts.includes(p.sku.toLowerCase().trim()) || 
-                      (p.barcode && alts.includes(p.barcode.toLowerCase().trim())) ||
-                      alts.includes(p.sku.toLowerCase().replace(/[-\s._]/g, '')) ||
-                      (p.barcode && alts.includes(p.barcode.toLowerCase().replace(/[-\s._]/g, '')))
-                    )
+                    p => !p.archived && isProductBarcodeMatch(p, searchQuery)
                   );
                   
                   if (exactSkuMatch) {
@@ -1369,7 +1338,9 @@ export const PosView: React.FC = () => {
                       type="button"
                       onClick={async () => {
                         try {
-                          await updateProduct(p.id, { barcode: unassignedBarcodeModal.code });
+                          const rawCode = unassignedBarcodeModal.info?.decoded || unassignedBarcodeModal.code;
+                          const cleanBarcode = stripAimAndControlChars(rawCode).trim();
+                          await updateProduct(p.id, { barcode: cleanBarcode });
                           if (p.currentStock > 0) {
                             addToCart(p, 1);
                           }
@@ -1377,7 +1348,7 @@ export const PosView: React.FC = () => {
                           setScanToast({
                             type: 'success',
                             title: `Code attribué à ${p.name}`,
-                            subtitle: `Le code ${unassignedBarcodeModal.code} est enregistré. ${p.currentStock > 0 ? '+1 ajouté au panier !' : ''}`,
+                            subtitle: `Le code "${cleanBarcode}" est maintenant lié avec succès ! ${p.currentStock > 0 ? '+1 ajouté au panier !' : ''}`,
                             timestamp: Date.now()
                           });
                           setUnassignedBarcodeModal(null);
