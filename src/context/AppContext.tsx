@@ -172,6 +172,12 @@ interface AppContextType {
     amountTendered?: number,
     changeReturned?: number
   ) => Promise<Sale>;
+  completeDirectSale: (
+    product: Product,
+    quantity?: number,
+    paymentMethod?: PaymentMethod,
+    customerName?: string
+  ) => Promise<Sale>;
   cancelSale: (saleId: string, reason: string) => Promise<void>;
 
   // Avoirs (Reconnaissance de dette / Reliquat de monnaie)
@@ -1804,6 +1810,122 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newSale;
   };
 
+  // Complete a 1-click Express Direct Sale for a popular product without disturbing existing cart
+  const completeDirectSale = async (
+    product: Product,
+    quantity = 1,
+    paymentMethod: PaymentMethod = 'cash',
+    customerName = 'Client Comptoir'
+  ): Promise<Sale> => {
+    if (quantity <= 0) {
+      throw new Error('La quantité doit être supérieure à zéro');
+    }
+    if (product.currentStock < quantity) {
+      throw new Error(`Stock insuffisant pour ${product.name} (Disponible : ${product.currentStock} ${product.unit})`);
+    }
+
+    const itemSubtotal = product.salePrice * quantity;
+    const itemCost = product.purchasePrice * quantity;
+    const profit = itemSubtotal - itemCost;
+    const pointsEarned = Math.floor(itemSubtotal / 1000);
+
+    const receiptNumber = `BZ-${new Date().getFullYear()}-${String(scopedSales.length + 1).padStart(3, '0')}`;
+    const saleId = `sale_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+    const nowIso = new Date().toISOString();
+
+    const saleItem = {
+      productId: product.id,
+      productName: product.name,
+      quantity,
+      unitPrice: product.salePrice,
+      purchasePrice: product.purchasePrice,
+      subtotal: itemSubtotal,
+      totalCost: itemCost,
+      unit: product.unit
+    };
+
+    const newSale: Sale = {
+      id: saleId,
+      businessId: business.id,
+      receiptNumber,
+      sellerId: currentUser.id,
+      sellerName: currentUser.name,
+      customerName,
+      items: [saleItem],
+      subtotal: itemSubtotal,
+      discount: 0,
+      total: itemSubtotal,
+      totalCost: itemCost,
+      profit,
+      paymentMethod,
+      loyaltyPointsEarned: pointsEarned,
+      amountTendered: paymentMethod === 'cash' ? itemSubtotal : undefined,
+      changeReturned: 0,
+      notes: `Vente Express ⚡ (${product.isPopular ? 'Produit Phare' : '1 Clic'})`,
+      createdAt: nowIso,
+    };
+
+    // Update local sales optimistically
+    setSales(prev => [newSale, ...prev]);
+
+    // 1. Decrement product stock & record stock movement
+    const prevStock = product.currentStock;
+    const nextStock = prevStock - quantity;
+
+    setProducts(prev =>
+      prev.map(p => (p.id === product.id ? { ...p, currentStock: nextStock } : p))
+    );
+
+    const newMovement: StockMovement = {
+      id: `mov_${Date.now()}_${product.id}`,
+      businessId: business.id,
+      productId: product.id,
+      productName: product.name,
+      type: 'sale',
+      quantity: -quantity,
+      previousStock: prevStock,
+      newStock: nextStock,
+      reason: `Vente Express Ticket #${receiptNumber}`,
+      userId: currentUser.id,
+      userName: currentUser.name,
+      createdAt: nowIso,
+    };
+
+    setStockMovements(prev => [newMovement, ...prev]);
+
+    // 2. Update active cash session if open
+    if (activeCashSession) {
+      const cashAmount = paymentMethod === 'cash' ? itemSubtotal : 0;
+      const omAmount = paymentMethod === 'orange_money' ? itemSubtotal : 0;
+      const moovAmount = paymentMethod === 'moov_money' ? itemSubtotal : 0;
+      const waveAmount = paymentMethod === 'wave_coris' ? itemSubtotal : 0;
+
+      const updatedSession: CashSession = {
+        ...activeCashSession,
+        totalCashSales: activeCashSession.totalCashSales + cashAmount,
+        totalOrangeMoneySales: activeCashSession.totalOrangeMoneySales + omAmount,
+        totalMoovMoneySales: activeCashSession.totalMoovMoneySales + moovAmount,
+        totalWaveSales: activeCashSession.totalWaveSales + waveAmount,
+        expectedCashInDrawer: activeCashSession.expectedCashInDrawer + cashAmount,
+      };
+
+      setCashSessions(prev => prev.map(cs => cs.id === activeCashSession.id ? updatedSession : cs));
+      syncMutation('cash_sessions', activeCashSession.id, 'update', updatedSession, 'Encaissement Vente Express');
+    }
+
+    // 3. Asynchronous Cloud Firestore Sync (non-blocking)
+    (async () => {
+      const syncTasks: Promise<any>[] = [
+        syncMutation('sales', saleId, 'set', newSale, `Vente Express #${receiptNumber}`),
+        syncMutation('products', product.id, 'update', { currentStock: nextStock }, `Stock ${product.name}`),
+        syncMutation('stock_movements', newMovement.id, 'set', newMovement, `Mouvement ${product.name}`)
+      ];
+      await Promise.allSettled(syncTasks);
+    })().catch(err => console.warn('[Fast Express Sale Sync Notice]:', err));
+
+    return newSale;
+  };
+
   // Cancel an existing sale with justification, restoring stock and adjusting accounts
   const cancelSale = async (saleId: string, reason: string): Promise<void> => {
     const trimmedReason = reason?.trim();
@@ -2850,6 +2972,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         removeFromCart,
         clearCart,
         completeSale,
+        completeDirectSale,
         cancelSale,
         addProduct,
         updateProduct,

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Product, Sale } from '../../types';
+import { Product, Sale, PaymentMethod } from '../../types';
 import { CheckoutModal } from './CheckoutModal';
 import { ReceiptModal } from './ReceiptModal';
 import { BarcodeScanner } from '../BarcodeScanner';
@@ -44,7 +44,9 @@ import {
   Volume2,
   VolumeX,
   Radio,
-  X
+  Star,
+  X,
+  Printer
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { cashDrawerService } from '../../lib/cashDrawerService';
@@ -52,6 +54,7 @@ import { CashDrawerModal } from './CashDrawerModal';
 import { CancelSaleModal } from './CancelSaleModal';
 import { UsbScannerModal } from './UsbScannerModal';
 import { VoiceCommandModal } from './VoiceCommandModal';
+import { ExpressSaleModal } from './ExpressSaleModal';
 import { BatchBarcodeModal } from '../products/BatchBarcodeModal';
 import { usbBarcodeScanner, normalizeBarcode, LastScanInfo, isProductBarcodeMatch, stripAimAndControlChars } from '../../lib/usbBarcodeScanner';
 
@@ -69,6 +72,7 @@ export const PosView: React.FC = () => {
     sales,
     currentUser,
     completeSale,
+    completeDirectSale,
     cancelSale,
     setActiveTab,
     summary,
@@ -82,6 +86,7 @@ export const PosView: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('Tous');
   const [overallDiscount, setOverallDiscount] = useState<number>(0);
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  const [showExpressSaleModal, setShowExpressSaleModal] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [showUsbScannerModal, setShowUsbScannerModal] = useState(false);
   const [showBatchBarcodeModalPos, setShowBatchBarcodeModalPos] = useState(false);
@@ -94,6 +99,7 @@ export const PosView: React.FC = () => {
     title: string;
     subtitle?: string;
     timestamp: number;
+    saleToView?: Sale;
   } | null>(null);
   const [lastCompletedSale, setLastCompletedSale] = useState<Sale | null>(null);
   const [showRecentSalesModal, setShowRecentSalesModal] = useState(false);
@@ -256,7 +262,7 @@ export const PosView: React.FC = () => {
     });
   }, [cart, overallDiscount, subtotal, totalAmount, totalItemCount, business, currentUser]);
 
-  const handleSaleSuccess = (sale: Sale, tenderReceived?: number, tenderChange?: number) => {
+  const handleSaleSuccess = (sale: Sale, tenderReceived?: number, tenderChange?: number, shouldPrint: boolean = true) => {
     setShowCheckoutModal(false);
     setOverallDiscount(0);
     const enrichedSale: Sale = {
@@ -264,7 +270,20 @@ export const PosView: React.FC = () => {
       amountTendered: sale.amountTendered !== undefined ? sale.amountTendered : tenderReceived,
       changeReturned: sale.changeReturned !== undefined ? sale.changeReturned : tenderChange,
     };
-    setLastCompletedSale(enrichedSale);
+
+    if (shouldPrint) {
+      setLastCompletedSale(enrichedSale);
+    } else {
+      setLastCompletedSale(null);
+      setScanToast({
+        type: 'success',
+        title: `✅ Vente validée sans impression • N° ${sale.receiptNumber}`,
+        subtitle: `${sale.total.toLocaleString('fr-FR')} ${business.currency} encaissé (${sale.paymentMethod === 'cash' ? 'Espèces' : sale.paymentMethod}) • Stock déchargé`,
+        timestamp: Date.now(),
+        saleToView: enrichedSale,
+      });
+    }
+
     setMobilePosTab('catalog');
 
     // Compute credit due if sale was credit or split credit
@@ -298,7 +317,7 @@ export const PosView: React.FC = () => {
 
     // Automatically trigger Cash Drawer Opening upon receipt validation
     cashDrawerService.triggerDrawer({
-      reason: `Validation Reçu N° ${sale.receiptNumber}`,
+      reason: shouldPrint ? `Validation Reçu N° ${sale.receiptNumber}` : `Validation Sans Impression N° ${sale.receiptNumber}`,
       paymentMethod: sale.paymentMethod,
       saleId: sale.id,
       operatorName: currentUser?.name || 'Caissier'
@@ -333,12 +352,45 @@ export const PosView: React.FC = () => {
       } catch (e) {
         // ignore
       }
-      handleSaleSuccess(sale, totalAmount, 0);
+      const shouldPrint = localStorage.getItem('bizpilot_autoprint_receipt') !== 'false';
+      handleSaleSuccess(sale, totalAmount, 0, shouldPrint);
     } catch (err: any) {
       console.error('Quick cash sale error:', err);
     } finally {
       setIsQuickCheckingOut(false);
     }
+  };
+
+  const handleExecuteExpressSale = async (
+    product: Product,
+    quantity = 1,
+    paymentMethod: PaymentMethod = 'cash',
+    customerName = 'Client Comptoir',
+    shouldPrint: boolean = true
+  ): Promise<Sale> => {
+    const sale = await completeDirectSale(product, quantity, paymentMethod, customerName);
+    try {
+      confetti({
+        particleCount: 50,
+        spread: 60,
+        origin: { y: 0.7 },
+        colors: ['#f59e0b', '#d97706', '#10b981']
+      });
+    } catch {}
+
+    handleSaleSuccess(sale, sale.total, 0, shouldPrint);
+
+    setScanToast({
+      type: 'success',
+      title: shouldPrint 
+        ? `⚡ Vente Express : ${product.name}` 
+        : `⚡ Vente Express sans impression : ${product.name}`,
+      subtitle: `${quantity} ${product.unit} validé(s) (${sale.total.toLocaleString('fr-FR')} ${business.currency}) • Reçu N° ${sale.receiptNumber}`,
+      timestamp: Date.now(),
+      saleToView: !shouldPrint ? sale : undefined,
+    });
+
+    return sale;
   };
 
   const openCustomerDisplayWindow = () => {
@@ -615,6 +667,18 @@ export const PosView: React.FC = () => {
               </span>
             ) : null}
           </button>
+
+          {/* VENTE EXPRESS TRIGGER BUTTON */}
+          <button
+            id="btn-pos-express-sale"
+            type="button"
+            onClick={() => setShowExpressSaleModal(true)}
+            className="flex items-center space-x-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white px-3 sm:px-3.5 py-2 rounded-xl text-xs font-black shadow-sm transition shrink-0 cursor-pointer animate-in fade-in"
+            title="Vente Express en 1 Clic : Vendre immédiatement un article populaire sans manipuler le panier complexe"
+          >
+            <Zap className="h-4 w-4 fill-white text-white animate-bounce" />
+            <span>Vente Express</span>
+          </button>
         </div>
 
         {/* Category Filter Pills */}
@@ -664,9 +728,20 @@ export const PosView: React.FC = () => {
                   >
                     <div>
                       <div className="flex items-start justify-between gap-1 mb-1">
-                        <span className="text-[10px] font-mono font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
-                          {product.sku || product.unit}
-                        </span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[10px] font-mono font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
+                            {product.sku || product.unit}
+                          </span>
+                          {product.isPopular && (
+                            <span 
+                              title="Produit Phare Populaire (Éligible Vente Express 1 Clic)"
+                              className="inline-flex items-center gap-0.5 bg-amber-100 text-amber-800 text-[9px] font-black px-1.5 py-0.5 rounded-md"
+                            >
+                              <Star className="h-2.5 w-2.5 fill-amber-500 text-amber-500" />
+                              <span className="hidden sm:inline">Top</span>
+                            </span>
+                          )}
+                        </div>
                         {isOutOfStock ? (
                           <span className="text-[10px] font-bold text-red-700 bg-red-100 px-1.5 py-0.5 rounded">
                             Rupture
@@ -688,22 +763,40 @@ export const PosView: React.FC = () => {
                       <p className="text-[10px] text-slate-400 mt-0.5">{product.category}</p>
                     </div>
 
-                    <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
-                      <span className="font-extrabold text-slate-900 text-xs sm:text-sm">
+                    <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between gap-1">
+                      <span className="font-extrabold text-slate-900 text-xs sm:text-sm truncate">
                         {product.salePrice.toLocaleString()} <span className="text-[10px] font-medium text-slate-500">{business.currency}</span>
                       </span>
 
-                      <button
-                        type="button"
-                        disabled={isOutOfStock}
-                        className={`h-7 w-7 rounded-lg flex items-center justify-center transition ${
-                          inCart 
-                            ? 'bg-blue-600 text-white font-bold text-xs' 
-                            : 'bg-slate-100 text-slate-700 group-hover:bg-blue-600 group-hover:text-white'
-                        }`}
-                      >
-                        {inCart ? inCart.quantity : <Plus className="h-4 w-4" />}
-                      </button>
+                      <div className="flex items-center space-x-1 shrink-0">
+                        {/* Quick 1-Click Express Sale Button for popular items */}
+                        {product.isPopular && !isOutOfStock && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleExecuteExpressSale(product, 1, 'cash', 'Client Comptoir');
+                            }}
+                            className="h-7 px-1.5 rounded-lg bg-amber-100 hover:bg-amber-500 text-amber-800 hover:text-white transition flex items-center space-x-0.5 text-[10px] font-black cursor-pointer shadow-2xs"
+                            title="⚡ Vente Express 1 Clic : Vendre immédiatement 1 unité en espèces sans toucher au panier"
+                          >
+                            <Zap className="h-3 w-3 fill-amber-500 group-hover:fill-white shrink-0" />
+                            <span className="hidden xl:inline">Express</span>
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          disabled={isOutOfStock}
+                          className={`h-7 w-7 rounded-lg flex items-center justify-center transition ${
+                            inCart 
+                              ? 'bg-blue-600 text-white font-bold text-xs' 
+                              : 'bg-slate-100 text-slate-700 group-hover:bg-blue-600 group-hover:text-white'
+                          }`}
+                        >
+                          {inCart ? inCart.quantity : <Plus className="h-4 w-4" />}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -807,14 +900,27 @@ export const PosView: React.FC = () => {
               <p className="text-[11px] text-slate-400 mt-1 max-w-[200px]">
                 Sélectionnez un article, scannez avec la douchette ou parlez au micro.
               </p>
-              <button
-                type="button"
-                onClick={() => setShowVoiceModal(true)}
-                className="mt-3 flex items-center space-x-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition shadow-2xs cursor-pointer"
-              >
-                <Mic className="h-3.5 w-3.5 text-rose-500" />
-                <span>Commande vocale</span>
-              </button>
+              <div className="flex flex-col gap-2 mt-3 w-full max-w-[210px]">
+                <button
+                  id="btn-empty-cart-express-sale"
+                  type="button"
+                  onClick={() => setShowExpressSaleModal(true)}
+                  className="w-full flex items-center justify-center space-x-1.5 px-3 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:from-amber-700 text-white rounded-xl text-xs font-black transition shadow-xs cursor-pointer"
+                  title="Vente Express en 1 clic pour un article populaire"
+                >
+                  <Zap className="h-3.5 w-3.5 fill-white text-white" />
+                  <span>⚡ Vente Express (1 Clic)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowVoiceModal(true)}
+                  className="w-full flex items-center justify-center space-x-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition shadow-2xs cursor-pointer"
+                >
+                  <Mic className="h-3.5 w-3.5 text-rose-500" />
+                  <span>Commande vocale</span>
+                </button>
+              </div>
             </div>
           ) : (
             cart.map(item => {
@@ -1243,13 +1349,35 @@ export const PosView: React.FC = () => {
                   {scanToast.title}
                 </p>
                 <span className="text-[10px] font-mono opacity-70 ml-2 shrink-0">
-                  Douchette USB
+                  {scanToast.saleToView ? 'Vente Caisse' : 'Douchette USB'}
                 </span>
               </div>
               {scanToast.subtitle && (
                 <p className="text-[11px] leading-snug mt-0.5 opacity-90 text-slate-100">
                   {scanToast.subtitle}
                 </p>
+              )}
+              {scanToast.saleToView && (
+                <div className="mt-2.5 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setViewReceiptFromHistory(scanToast.saleToView!);
+                      setScanToast(null);
+                    }}
+                    className="px-2.5 py-1 bg-white/20 hover:bg-white/30 active:bg-white/40 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                    <span>Voir / Imprimer le ticket</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setScanToast(null)}
+                    className="px-2 py-1 text-white/70 hover:text-white text-xs cursor-pointer font-medium"
+                  >
+                    Fermer
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -1483,6 +1611,15 @@ export const PosView: React.FC = () => {
         businessCurrency={business.currency}
         businessName={business.name}
         onBatchUpdate={batchUpdateProducts}
+      />
+
+      {/* 1-CLICK VENTE EXPRESS MODAL FOR POPULAR PRODUCTS */}
+      <ExpressSaleModal
+        isOpen={showExpressSaleModal}
+        onClose={() => setShowExpressSaleModal(false)}
+        products={products}
+        business={business}
+        onExecuteSale={handleExecuteExpressSale}
       />
     </div>
   );

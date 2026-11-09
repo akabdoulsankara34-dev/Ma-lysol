@@ -13,7 +13,8 @@ import {
   Coins,
   ShieldCheck,
   UserPlus,
-  Ticket
+  Ticket,
+  Printer
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { usbBarcodeScanner } from '../../lib/usbBarcodeScanner';
@@ -23,7 +24,7 @@ interface CheckoutModalProps {
   subtotal: number;
   discount: number;
   selectedCustomerId?: string;
-  onSuccess: (sale: Sale, receivedAmount?: number, changeToReturn?: number) => void;
+  onSuccess: (sale: Sale, receivedAmount?: number, changeToReturn?: number, shouldPrint?: boolean) => void;
   onClose: () => void;
 }
 
@@ -43,6 +44,11 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [notes, setNotes] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Preference for auto printing receipt
+  const [autoPrintReceipt, setAutoPrintReceipt] = useState<boolean>(() => {
+    return localStorage.getItem('bizpilot_autoprint_receipt') !== 'false';
+  });
 
   // Avoir state
   const [avoirCodeInput, setAvoirCodeInput] = useState<string>('');
@@ -144,7 +150,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     }
   };
 
-  const handleValidate = async () => {
+  const handleValidate = async (forcePrint?: boolean) => {
     setErrorMessage(null);
 
     // Validation for cash sale
@@ -270,10 +276,13 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         // ignore in non-canvas environments
       }
 
+      const shouldPrint = forcePrint !== undefined ? forcePrint : autoPrintReceipt;
+
       onSuccess(
         sale, 
         paidReceived, 
-        changeGiven
+        changeGiven,
+        shouldPrint
       );
     } catch (err: any) {
       setErrorMessage(err.message || 'Erreur lors de la validation de la vente');
@@ -768,28 +777,73 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             />
           </div>
 
+          {/* Option d'impression du ticket */}
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
+            <div className="flex items-center space-x-2.5">
+              <div className="p-1.5 bg-blue-100 text-blue-700 rounded-lg shrink-0">
+                <Printer className="h-4 w-4" />
+              </div>
+              <div>
+                <span className="text-xs font-bold text-slate-800 block">Impression automatique du ticket</span>
+                <span className="text-[10px] text-slate-500">Imprimer le reçu thermique ou système dès la validation</span>
+              </div>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer shrink-0">
+              <input
+                type="checkbox"
+                checked={autoPrintReceipt}
+                onChange={(e) => {
+                  setAutoPrintReceipt(e.target.checked);
+                  localStorage.setItem('bizpilot_autoprint_receipt', String(e.target.checked));
+                }}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-slate-300 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+              <span className="ml-2 text-[11px] font-bold text-slate-700">
+                {autoPrintReceipt ? 'Oui' : 'Non'}
+              </span>
+            </label>
+          </div>
+
         </div>
 
         {/* Footer Actions */}
-        <div className="px-5 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+        <div className="px-5 py-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2.5 text-xs font-medium text-slate-600 hover:bg-slate-200 rounded-xl transition"
+            className="px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-xl transition text-center cursor-pointer order-3 sm:order-1"
           >
             Retour au panier
           </button>
 
-          <button
-            type="button"
-            id="btn-confirm-pos-sale"
-            disabled={isSubmitting}
-            onClick={handleValidate}
-            className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 text-white text-xs sm:text-sm font-bold rounded-xl shadow-xs flex items-center space-x-2 transition"
-          >
-            <Check className="h-4 w-4" />
-            <span>{isSubmitting ? 'Validation...' : `Encaisser ${totalAmount.toLocaleString()} ${business.currency}`}</span>
-          </button>
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-end order-1 sm:order-2 flex-wrap sm:flex-nowrap">
+            {/* Valider Sans Imprimer button */}
+            <button
+              type="button"
+              id="btn-confirm-pos-sale-no-print"
+              disabled={isSubmitting}
+              onClick={() => handleValidate(false)}
+              className="flex-1 sm:flex-initial px-3.5 py-2.5 bg-white hover:bg-emerald-50 active:bg-emerald-100 text-slate-800 border-2 border-emerald-500/60 hover:border-emerald-600 disabled:opacity-50 text-xs sm:text-sm font-black rounded-xl shadow-xs flex items-center justify-center space-x-1.5 transition cursor-pointer"
+              title="Enregistrer et décharger le stock immédiatement sans lancer d'impression"
+            >
+              <Check className="h-4 w-4 text-emerald-600 shrink-0" />
+              <span>Valider sans imprimer</span>
+            </button>
+
+            {/* Encaisser & Imprimer button */}
+            <button
+              type="button"
+              id="btn-confirm-pos-sale"
+              disabled={isSubmitting}
+              onClick={() => handleValidate(true)}
+              className="flex-1 sm:flex-initial px-4 sm:px-5 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 text-white text-xs sm:text-sm font-bold rounded-xl shadow-xs flex items-center justify-center space-x-2 transition cursor-pointer"
+              title="Valider la vente et lancer l'impression du ticket de caisse"
+            >
+              <Printer className="h-4 w-4 shrink-0" />
+              <span>{isSubmitting ? 'Validation...' : 'Encaisser & Imprimer'}</span>
+            </button>
+          </div>
         </div>
 
       </div>

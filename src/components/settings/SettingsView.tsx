@@ -95,6 +95,9 @@ export const SettingsView: React.FC = () => {
   const [bleDeviceName, setBleDeviceName] = useState<string | null>(blePrinter.getConnectedDeviceName());
   const [bleTesting, setBleTesting] = useState(false);
   const [bleMsg, setBleMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [autoPrintReceiptSetting, setAutoPrintReceiptSetting] = useState<boolean>(() => {
+    return localStorage.getItem('bizpilot_autoprint_receipt') !== 'false';
+  });
 
   useEffect(() => {
     blePrinter.ensureConnected().then(() => {
@@ -891,6 +894,62 @@ export const SettingsView: React.FC = () => {
                 <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-100 text-emerald-800 font-bold text-[11px]">
                   <CheckCircle2 className="h-3.5 w-3.5" /> PWA Prêt (Ajouter à l'écran d'accueil)
                 </span>
+              </div>
+            </div>
+          </div>
+
+          {/* CARD 5: Receipt Print Options & Paperless Sale */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center space-x-2.5">
+                <div className="h-9 w-9 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center">
+                  <Printer className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="font-bold text-slate-900 text-sm sm:text-base">Mode d'Impression des Reçus & Dématérialisation</h2>
+                  <p className="text-[11px] text-slate-500">Configurez le comportement par défaut lors de la validation des ventes en caisse.</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 bg-slate-50 border border-slate-200 rounded-xl">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <p className="font-bold text-slate-900">Impression automatique systématique des tickets</p>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      autoPrintReceiptSetting ? 'bg-blue-100 text-blue-800' : 'bg-emerald-100 text-emerald-800'
+                    }`}>
+                      {autoPrintReceiptSetting ? 'Impression auto' : 'Mode Économique (Sans impression)'}
+                    </span>
+                  </div>
+                  <p className="text-slate-600 text-[11px] max-w-xl">
+                    Lorsque cette option est activée, valider un encaissement déclenche automatiquement la fenêtre d'impression ou l'imprimante thermique. Lorsqu'elle est désactivée, la vente est validée instantanément sans lancer l'imprimante (vous pouvez toujours imprimer manuellement à la demande du client).
+                  </p>
+                </div>
+
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={autoPrintReceiptSetting}
+                    onChange={(e) => {
+                      setAutoPrintReceiptSetting(e.target.checked);
+                      localStorage.setItem('bizpilot_autoprint_receipt', String(e.target.checked));
+                    }}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-slate-300 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                  <span className="ml-3 text-xs font-bold text-slate-700">
+                    {autoPrintReceiptSetting ? 'Activée' : 'Désactivée'}
+                  </span>
+                </label>
+              </div>
+
+              <div className="p-3.5 bg-blue-50/70 border border-blue-200 rounded-xl text-[11px] text-blue-950 flex items-start gap-2">
+                <CheckCircle2 className="h-4 w-4 text-blue-700 shrink-0 mt-0.5" />
+                <p>
+                  <strong>Astuce Caissier :</strong> Même avec l'impression automatique désactivée, des boutons dédiés <em>"Valider sans imprimer"</em> et <em>"Encaisser & Imprimer"</em> restent disponibles en permanence dans le panier pour choisir au cas par cas selon la demande du client.
+                </p>
               </div>
             </div>
           </div>
