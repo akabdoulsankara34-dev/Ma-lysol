@@ -15,11 +15,19 @@ export type NavigationTab =
   | 'dashboard' 
   | 'settings' 
   | 'customer_display'
-  | 'admin';
+  | 'admin'
+  | 'daf_home'
+  | 'daf_presentation'
+  | 'daf_support'
+  | 'daf_feedback'
+  | 'daf_profile'
+  | 'daf_settings'
+  | 'daf_about'
+  | 'daf_admin';
 
 export type PaymentMethod = 'cash' | 'orange_money' | 'moov_money' | 'wave_coris' | 'credit' | 'split' | 'avoir';
 
-export type StockMovementType = 'in_purchase' | 'out_manual' | 'sale' | 'return_customer' | 'damaged_loss' | 'inventory_adjustment';
+export type StockMovementType = 'in_purchase' | 'out_manual' | 'sale' | 'return_customer' | 'damaged_loss' | 'expired_loss' | 'inventory_adjustment';
 
 export type ExpenseCategory = 
   | 'transport'

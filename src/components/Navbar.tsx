@@ -18,8 +18,12 @@ import {
   KeyRound,
   RefreshCw,
   Menu,
-  Lock
+  Lock,
+  Sun,
+  Moon,
+  Headphones
 } from 'lucide-react';
+import { useDigiSolia } from '../digisolia';
 
 export const Navbar: React.FC = () => {
   const { 
@@ -49,6 +53,7 @@ export const Navbar: React.FC = () => {
 
   const [showUserDropdown, setShowUserDropdown] = useState(false);
   const [showNotifDropdown, setShowNotifDropdown] = useState(false);
+  const { theme, toggleTheme } = useDigiSolia();
 
   const unreadNotifs = notifications.filter(n => !n.read);
 
@@ -68,7 +73,7 @@ export const Navbar: React.FC = () => {
   };
 
   return (
-    <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-xs">
+    <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-40 shadow-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
@@ -95,7 +100,7 @@ export const Navbar: React.FC = () => {
               </div>
               <div className="min-w-0">
                 <div className="flex items-center space-x-1.5 sm:space-x-2">
-                  <span className="font-bold text-slate-900 text-sm sm:text-lg tracking-tight group-hover:text-blue-600 transition truncate">
+                  <span className="font-bold text-slate-900 dark:text-white text-sm sm:text-lg tracking-tight group-hover:text-blue-600 transition truncate">
                     BizPilot <span className="text-blue-600 font-extrabold">BF</span>
                   </span>
                   <span className="font-mono text-[10px] sm:text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200 px-1.5 sm:px-2 py-0.5 rounded-md shrink-0">
@@ -250,12 +255,23 @@ export const Navbar: React.FC = () => {
               )}
             </button>
 
+            {/* Light / Dark Theme Toggle */}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              title={theme === 'dark' ? 'Passer en mode clair' : 'Passer en mode sombre'}
+              className="p-2 rounded-lg text-slate-500 dark:text-slate-300 hover:text-slate-800 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+              aria-label="Changer de thème"
+            >
+              {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
+
             {/* Quick Session Lock Button */}
             <button
               type="button"
               onClick={lockUserSession}
               title="Verrouiller l'écran (Mot de passe requis)"
-              className="hidden sm:flex p-2 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition cursor-pointer"
+              className="hidden sm:flex p-2 rounded-lg text-slate-500 dark:text-slate-300 hover:text-slate-800 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
             >
               <Lock className="h-4 w-4" />
             </button>
@@ -313,6 +329,28 @@ export const Navbar: React.FC = () => {
                   </div>
 
                   <div className="border-t border-slate-100 mt-1 pt-1 px-1 space-y-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowUserDropdown(false);
+                        setActiveTab('daf_profile');
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-lg text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2 font-semibold transition cursor-pointer"
+                    >
+                      <User className="h-3.5 w-3.5 text-[#2783C7]" />
+                      <span>Mon profil DigiSolia</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowUserDropdown(false);
+                        setActiveTab('daf_support');
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-lg text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2 font-semibold transition cursor-pointer"
+                    >
+                      <Headphones className="h-3.5 w-3.5 text-[#163B65]" />
+                      <span>Centre d’assistance</span>
+                    </button>
                     <button
                       type="button"
                       onClick={() => {

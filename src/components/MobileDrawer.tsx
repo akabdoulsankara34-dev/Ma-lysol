@@ -25,7 +25,13 @@ import {
   RefreshCw,
   KeyRound,
   ChevronRight,
-  Lock
+  Lock,
+  Home,
+  Sparkles,
+  Headphones,
+  MessageSquarePlus,
+  Info,
+  Sliders
 } from 'lucide-react';
 import { NavigationTab } from '../types';
 
@@ -205,6 +211,59 @@ export const MobileDrawer: React.FC = () => {
           icon: ShieldCheck,
           badge: 'Maître',
           badgeColor: 'bg-blue-500 text-white font-bold',
+          allowed: isPlatformAdminUnlocked,
+        },
+      ],
+    },
+    {
+      sectionTitle: 'Écosystème DigiSolia',
+      items: [
+        {
+          id: 'daf_home',
+          label: 'Accueil DigiSolia',
+          icon: Home,
+          allowed: true,
+        },
+        {
+          id: 'daf_presentation',
+          label: 'Présentation',
+          icon: Sparkles,
+          allowed: true,
+        },
+        {
+          id: 'daf_support',
+          label: 'Centre d’assistance',
+          icon: Headphones,
+          allowed: true,
+        },
+        {
+          id: 'daf_feedback',
+          label: 'Donner mon avis',
+          icon: MessageSquarePlus,
+          allowed: true,
+        },
+        {
+          id: 'daf_profile',
+          label: 'Mon profil',
+          icon: User,
+          allowed: true,
+        },
+        {
+          id: 'daf_settings',
+          label: 'Paramètres DigiSolia',
+          icon: Sliders,
+          allowed: true,
+        },
+        {
+          id: 'daf_about',
+          label: 'À propos',
+          icon: Info,
+          allowed: true,
+        },
+        {
+          id: 'daf_admin',
+          label: 'DigiSolia Admin',
+          icon: ShieldCheck,
           allowed: isPlatformAdminUnlocked,
         },
       ],

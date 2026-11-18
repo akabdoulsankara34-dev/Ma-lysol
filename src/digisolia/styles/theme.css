@@ -1,0 +1,42 @@
+/* DIGISOLIA APP FRAMEWORK (DAF) — Design Tokens & Theme Surface Variables */
+:root {
+  --daf-primary: #163B65;
+  --daf-primary-hover: #102D4F;
+  --daf-secondary: #2783C7;
+  --daf-secondary-hover: #1E6EA8;
+  --daf-white: #FFFFFF;
+  --daf-bg: #F4F7FB;
+  --daf-surface: #FFFFFF;
+  --daf-surface-muted: #F8FAFC;
+  --daf-border: #E1E7EF;
+  --daf-text: #0F172A;
+  --daf-text-muted: #475569;
+}
+
+html.dark {
+  color-scheme: dark;
+  --daf-bg: #0B1120;
+  --daf-surface: #111827;
+  --daf-surface-muted: #1E293B;
+  --daf-border: #1E293B;
+  --daf-text: #F8FAFC;
+  --daf-text-muted: #94A3B8;
+}
+
+html.dark body {
+  background-color: var(--daf-bg);
+  color: var(--daf-text);
+}
+
+.daf-surface {
+  background-color: var(--daf-surface);
+  border-color: var(--daf-border);
+}
+
+.daf-bg {
+  background-color: var(--daf-bg);
+}
+
+.daf-tabular {
+  font-variant-numeric: tabular-nums;
+}

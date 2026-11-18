@@ -29,7 +29,11 @@ import {
   Edit2,
   HelpCircle,
   ExternalLink,
-  ShieldAlert
+  ShieldAlert,
+  Calendar,
+  DollarSign,
+  Clock,
+  Trash2
 } from 'lucide-react';
 
 export const StockView: React.FC = () => {
@@ -65,11 +69,19 @@ export const StockView: React.FC = () => {
   const [editingThresholdProductId, setEditingThresholdProductId] = useState<string | null>(null);
   const [tempThresholdValue, setTempThresholdValue] = useState<number>(5);
 
-  // Form for stock movement
+  // Form for stock movement (+ / - / =)
   const [selectedProductId, setSelectedProductId] = useState<string>(products[0]?.id || '');
   const [movementType, setMovementType] = useState<StockMovementType>('in_purchase');
   const [movementQty, setMovementQty] = useState<number>(5);
   const [movementReason, setMovementReason] = useState<string>('Approvisionnement fournisseur');
+  const [movementMode, setMovementMode] = useState<'in' | 'out' | 'inventory'>('in');
+  const [lossReasonType, setLossReasonType] = useState<'broken' | 'expired' | 'damaged' | 'missing' | 'internal'>('broken');
+  const [recordLossAsExpense, setRecordLossAsExpense] = useState<boolean>(true);
+  const [movementNewPrice, setMovementNewPrice] = useState<number | ''>('');
+  const [movementNewExpiry, setMovementNewExpiry] = useState<string>('');
+  const [movementBatchNumber, setMovementBatchNumber] = useState<string>('');
+  const [movementSupplier, setMovementSupplier] = useState<string>('');
+  const [inventoryCount, setInventoryCount] = useState<number>(0);
 
   // Batch threshold settings modal state
   const [batchTarget, setBatchTarget] = useState<'all' | 'popular' | 'category'>('popular');
@@ -191,15 +203,32 @@ export const StockView: React.FC = () => {
     });
   }, [stockMovements, typeFilter, movementSearch]);
 
-  // Open Quick Restock Modal prefilled for a product
+  // Open Quick Restock Modal (+)
   const handleOpenRestockModal = (product: Product) => {
     setSelectedProductId(product.id);
+    setMovementMode('in');
     setMovementType('in_purchase');
     // Suggest quantity to bring stock comfortably up to 2.5x the threshold
     const targetBuffer = product.alertThreshold * 2.5;
     const recommendedQty = Math.max(5, Math.ceil(targetBuffer - product.currentStock));
     setMovementQty(recommendedQty);
-    setMovementReason(`Réapprovisionnement suite à alerte seuil (Actuel: ${product.currentStock}, Seuil min: ${product.alertThreshold})`);
+    setMovementReason(`Réapprovisionnement fournisseur`);
+    setMovementNewPrice(product.purchasePrice || '');
+    setMovementNewExpiry(product.expiryDate || '');
+    setMovementBatchNumber(product.batchNumber || '');
+    setMovementSupplier(product.supplier || '');
+    setShowMovementModal(true);
+  };
+
+  // Open Quick Loss / Damaged / Expired Modal (-)
+  const handleOpenLossModal = (product: Product, defaultLoss: 'broken' | 'expired' = 'broken') => {
+    setSelectedProductId(product.id);
+    setMovementMode('out');
+    setLossReasonType(defaultLoss);
+    setMovementType(defaultLoss === 'expired' ? 'expired_loss' : 'damaged_loss');
+    setMovementQty(1);
+    setMovementReason(defaultLoss === 'expired' ? 'Produit périmé (date de péremption dépassée)' : 'Produit cassé / abîmé en rayon');
+    setRecordLossAsExpense(true);
     setShowMovementModal(true);
   };
 
@@ -220,17 +249,68 @@ export const StockView: React.FC = () => {
     setEditingThresholdProductId(null);
   };
 
-  // Save new stock movement
+  // Save new stock movement (+ / - / =)
   const handleSaveMovement = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedProductId || movementQty <= 0) return;
+    if (!selectedProductId) return;
+
+    const prod = products.find(p => p.id === selectedProductId);
+    if (!prod) return;
+
+    let targetType: StockMovementType = movementType;
+    let qty = Math.abs(movementQty);
+    let reason = movementReason.trim();
+
+    if (movementMode === 'in') {
+      targetType = movementType === 'return_customer' ? 'return_customer' : 'in_purchase';
+      if (!reason) reason = 'Arrivage marchandise / Réapprovisionnement';
+    } else if (movementMode === 'out') {
+      if (lossReasonType === 'expired') {
+        targetType = 'expired_loss';
+        if (!reason) reason = 'Produit périmé / DLC dépassée';
+      } else if (lossReasonType === 'broken') {
+        targetType = 'damaged_loss';
+        if (!reason) reason = 'Produit cassé / abîmé';
+      } else if (lossReasonType === 'damaged') {
+        targetType = 'damaged_loss';
+        if (!reason) reason = 'Produit avarié / défectueux';
+      } else if (lossReasonType === 'missing') {
+        targetType = 'out_manual';
+        if (!reason) reason = "Perte / Écart d'inventaire négatif";
+      } else {
+        targetType = 'out_manual';
+        if (!reason) reason = 'Consommation interne boutique';
+      }
+    } else if (movementMode === 'inventory') {
+      targetType = 'inventory_adjustment';
+      qty = Math.max(0, inventoryCount);
+      if (!reason) reason = 'Ajustement inventaire physique';
+    }
+
+    if (movementMode !== 'inventory' && qty <= 0) return;
 
     await recordStockMovement(
       selectedProductId,
-      movementType,
-      Math.abs(movementQty),
-      movementReason.trim() || 'Mouvement manuel'
+      targetType,
+      qty,
+      reason,
+      {
+        newPurchasePrice: movementMode === 'in' && typeof movementNewPrice === 'number' && movementNewPrice > 0 ? movementNewPrice : undefined,
+        newExpiryDate: movementMode === 'in' && movementNewExpiry ? movementNewExpiry : undefined,
+        batchNumber: movementMode === 'in' && movementBatchNumber ? movementBatchNumber : undefined,
+        supplier: movementMode === 'in' && movementSupplier ? movementSupplier : undefined,
+        recordAsExpense: movementMode === 'out' ? recordLossAsExpense : false
+      }
     );
+
+    const toastLabel = movementMode === 'in' 
+      ? `+${qty} ${prod.unit} approvisionné(s)`
+      : movementMode === 'out'
+      ? `-${qty} ${prod.unit} déstocké(s) (${reason})`
+      : `Stock réaligné à ${qty} ${prod.unit}`;
+
+    setBatchSuccessToast(`Opération effectuée : ${prod.name} (${toastLabel})`);
+    setTimeout(() => setBatchSuccessToast(null), 4000);
 
     setShowMovementModal(false);
     setMovementReason('');
@@ -272,7 +352,9 @@ export const StockView: React.FC = () => {
       case 'out_manual':
         return <span className="bg-slate-100 text-slate-700 text-[11px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1"><MinusCircle className="h-3 w-3" /> Sortie Manuelle</span>;
       case 'damaged_loss':
-        return <span className="bg-red-50 text-red-800 text-[11px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1"><AlertOctagon className="h-3 w-3" /> Perte / Casse</span>;
+        return <span className="bg-red-50 text-red-800 text-[11px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1"><AlertOctagon className="h-3 w-3" /> Produit Cassé / Avarié</span>;
+      case 'expired_loss':
+        return <span className="bg-rose-50 text-rose-800 text-[11px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Produit Périmé</span>;
       case 'inventory_adjustment':
         return <span className="bg-indigo-50 text-indigo-800 text-[11px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1"><ClipboardCheck className="h-3 w-3" /> Inventaire</span>;
       case 'return_customer':
@@ -405,21 +487,48 @@ export const StockView: React.FC = () => {
             <span>Bon de Réappro ({allNeedingRestock.length})</span>
           </button>
 
-          {/* New stock movement button */}
+          {/* Approvisionnement (+) button */}
           <button
-            id="btn-new-stock-movement"
+            id="btn-new-stock-in"
             type="button"
             onClick={() => {
               if (products.length > 0) setSelectedProductId(products[0].id);
+              setMovementMode('in');
               setMovementType('in_purchase');
               setMovementQty(10);
-              setMovementReason('Livraison marchandise');
+              setMovementReason('Arrivage marchandise / Réapprovisionnement');
+              if (products.length > 0) {
+                setMovementNewPrice(products[0].purchasePrice || '');
+                setMovementSupplier(products[0].supplier || '');
+              }
               setShowMovementModal(true);
             }}
-            className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white px-3.5 sm:px-4 py-2 rounded-xl font-bold text-xs sm:text-sm shadow-xs transition cursor-pointer"
+            className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm shadow-xs transition cursor-pointer"
+            title="Enregistrer un arrivage ou une entrée de stock (+)"
           >
             <PlusCircle className="h-4 w-4" />
-            <span>Nouveau Mouvement</span>
+            <span>Approvisionner (+)</span>
+          </button>
+
+          {/* Déstockage Casse / Périmé (-) button */}
+          <button
+            id="btn-new-stock-out-loss"
+            type="button"
+            onClick={() => {
+              if (products.length > 0) setSelectedProductId(products[0].id);
+              setMovementMode('out');
+              setLossReasonType('broken');
+              setMovementType('damaged_loss');
+              setMovementQty(1);
+              setMovementReason('Produit cassé / abîmé');
+              setRecordLossAsExpense(true);
+              setShowMovementModal(true);
+            }}
+            className="flex items-center space-x-1.5 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm shadow-xs transition cursor-pointer"
+            title="Déclarer un produit cassé, avarié ou périmé (-)"
+          >
+            <MinusCircle className="h-4 w-4" />
+            <span>Casse / Périmé (-)</span>
           </button>
         </div>
       </div>
@@ -817,7 +926,7 @@ export const StockView: React.FC = () => {
                   <th className="py-3 px-3.5 min-w-[220px]">Indicateur Visuel & Jauge de Stock</th>
                   <th className="py-3 px-3.5">Seuil Min Défini</th>
                   <th className="py-3 px-3.5">Fournisseur & Prix</th>
-                  <th className="py-3 px-3.5 text-right">Action Réappro</th>
+                  <th className="py-3 px-3.5 text-right">Ajustement Stock (+ / -)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -1053,23 +1162,37 @@ export const StockView: React.FC = () => {
                           </p>
                         </td>
 
-                        {/* ACTION RÉAPPRO RAPIDE */}
+                        {/* ACTIONS RAPIDES : APPRO (+) & CASSE / PÉRIMÉ (-) */}
                         <td className="py-3 px-3.5 text-right whitespace-nowrap">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenRestockModal(product)}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 ml-auto shadow-2xs cursor-pointer ${
-                              isUnderThreshold
-                                ? product.isPopular
-                                  ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-600/20'
-                                  : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-600/20'
-                                : 'bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 border border-slate-200'
-                            }`}
-                            title="Enregistrer une entrée de réapprovisionnement pour cet article"
-                          >
-                            <PlusCircle className="h-3.5 w-3.5" />
-                            <span>Réapprovisionner</span>
-                          </button>
+                          <div className="flex items-center justify-end gap-1.5">
+                            {/* Bouton Appro (+) */}
+                            <button
+                              type="button"
+                              onClick={() => handleOpenRestockModal(product)}
+                              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center space-x-1 shadow-2xs cursor-pointer ${
+                                isUnderThreshold
+                                  ? product.isPopular
+                                    ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-600/20'
+                                    : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20'
+                                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              }`}
+                              title="Enregistrer un approvisionnement ou arrivage (+)"
+                            >
+                              <PlusCircle className="h-3.5 w-3.5" />
+                              <span>Appro (+)</span>
+                            </button>
+
+                            {/* Bouton Casse / Périmé (-) */}
+                            <button
+                              type="button"
+                              onClick={() => handleOpenLossModal(product, 'broken')}
+                              className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 transition flex items-center space-x-1 shadow-2xs cursor-pointer"
+                              title="Déclarer un produit cassé, avarié ou périmé (-)"
+                            >
+                              <MinusCircle className="h-3.5 w-3.5 text-rose-600" />
+                              <span>Casse / Périmé (-)</span>
+                            </button>
+                          </div>
                         </td>
 
                       </tr>
@@ -1136,7 +1259,8 @@ export const StockView: React.FC = () => {
                 <option value="in_purchase">Entrées Achat</option>
                 <option value="sale">Ventes Caisse</option>
                 <option value="out_manual">Sorties Manuelles</option>
-                <option value="damaged_loss">Pertes / Casse</option>
+                <option value="damaged_loss">Produits Cassés / Avariés</option>
+                <option value="expired_loss">Produits Périmés</option>
                 <option value="inventory_adjustment">Ajustement Inventaire</option>
                 <option value="return_customer">Retour Client</option>
               </select>
@@ -1481,116 +1605,565 @@ export const StockView: React.FC = () => {
         </div>
       )}
 
-      {/* MODAL 3: STOCK MOVEMENT / QUICK RESTOCK MODAL */}
+      {/* MODAL 3: ENHANCED STOCK ADJUSTMENT (+ / - / =) MODAL */}
       {showMovementModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-200">
-            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <PlusCircle className="h-5 w-5 text-blue-400" />
-                <h3 className="font-bold text-sm sm:text-base">Enregistrer un Mouvement de Stock</h3>
+          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[92vh]">
+            
+            {/* Dynamic Modal Header depending on Mode */}
+            <div className={`p-4 text-white flex items-center justify-between shrink-0 transition-colors ${
+              movementMode === 'in'
+                ? 'bg-gradient-to-r from-emerald-600 to-teal-700'
+                : movementMode === 'out'
+                ? 'bg-gradient-to-r from-rose-600 via-red-600 to-rose-700'
+                : 'bg-gradient-to-r from-indigo-600 to-blue-700'
+            }`}>
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2 bg-white/20 rounded-xl backdrop-blur-xs">
+                  {movementMode === 'in' && <PlusCircle className="h-5 w-5 text-white" />}
+                  {movementMode === 'out' && <MinusCircle className="h-5 w-5 text-white" />}
+                  {movementMode === 'inventory' && <ClipboardCheck className="h-5 w-5 text-white" />}
+                </div>
+                <div>
+                  <h3 className="font-black text-sm sm:text-base leading-tight">
+                    {movementMode === 'in' && 'Approvisionnement de Stock (Entrée +)'}
+                    {movementMode === 'out' && 'Déstockage : Produit Cassé ou Périmé (-)'}
+                    {movementMode === 'inventory' && 'Régularisation / Inventaire Réel (=)'}
+                  </h3>
+                  <p className="text-[11px] text-white/80 font-medium">
+                    {movementMode === 'in' && 'Réception fournisseur ou entrée manuelle de marchandise'}
+                    {movementMode === 'out' && 'Décharge de stock pour perte, casse matérielle ou péremption'}
+                    {movementMode === 'inventory' && 'Ajustement du stock informatique sur comptage physique'}
+                  </p>
+                </div>
               </div>
               <button
+                type="button"
                 onClick={() => setShowMovementModal(false)}
-                className="text-slate-400 hover:text-white p-1"
+                className="text-white/80 hover:text-white p-1 hover:bg-white/20 rounded-xl transition cursor-pointer"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveMovement} className="p-5 space-y-4">
+            {/* Mode Switcher Tabs */}
+            <div className="p-2 bg-slate-100 border-b border-slate-200 grid grid-cols-3 gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setMovementMode('in');
+                  setMovementType('in_purchase');
+                  if (!movementReason || movementReason.includes('cassé') || movementReason.includes('périmé') || movementReason.includes('inventaire')) {
+                    setMovementReason('Arrivage marchandise / Réapprovisionnement');
+                  }
+                }}
+                className={`py-2 px-1 text-xs font-bold rounded-xl transition flex items-center justify-center space-x-1 cursor-pointer ${
+                  movementMode === 'in'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'bg-white text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                <PlusCircle className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">Appro (+)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMovementMode('out');
+                  setLossReasonType('broken');
+                  setMovementType('damaged_loss');
+                  setMovementReason('Produit cassé / abîmé en rayon');
+                }}
+                className={`py-2 px-1 text-xs font-bold rounded-xl transition flex items-center justify-center space-x-1 cursor-pointer ${
+                  movementMode === 'out'
+                    ? 'bg-rose-600 text-white shadow-xs'
+                    : 'bg-white text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                <MinusCircle className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">Casse / Périmé (-)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMovementMode('inventory');
+                  setMovementType('inventory_adjustment');
+                  setInventoryCount(selectedProduct?.currentStock || 0);
+                  setMovementReason('Ajustement inventaire physique');
+                }}
+                className={`py-2 px-1 text-xs font-bold rounded-xl transition flex items-center justify-center space-x-1 cursor-pointer ${
+                  movementMode === 'inventory'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'bg-white text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                <ClipboardCheck className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">Inventaire (=)</span>
+              </button>
+            </div>
+
+            {/* Form Body */}
+            <form onSubmit={handleSaveMovement} className="p-4 sm:p-5 overflow-y-auto space-y-4 flex-1">
               
               {/* Product selector */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Sélectionner l'article *</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Article concerné *
+                </label>
                 <select
                   required
                   value={selectedProductId}
-                  onChange={(e) => setSelectedProductId(e.target.value)}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setSelectedProductId(id);
+                    const p = products.find(prod => prod.id === id);
+                    if (p) {
+                      setMovementNewPrice(p.purchasePrice || '');
+                      setMovementNewExpiry(p.expiryDate || '');
+                      setMovementBatchNumber(p.batchNumber || '');
+                      setMovementSupplier(p.supplier || '');
+                      if (movementMode === 'inventory') setInventoryCount(p.currentStock);
+                    }
+                  }}
                   className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   {activeProducts.map(p => (
                     <option key={p.id} value={p.id}>
-                      {p.isPopular ? '⭐ ' : ''}{p.name} (Stock actuel: {p.currentStock} {p.unit} • Seuil: {p.alertThreshold})
+                      {p.isPopular ? '⭐ ' : ''}{p.name} (Stock: {p.currentStock} {p.unit} • Achat: {p.purchasePrice.toLocaleString()} {business.currency})
                     </option>
                   ))}
                 </select>
+
+                {/* Product quick summary pill */}
+                {selectedProduct && (
+                  <div className="mt-2 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[11px] text-slate-600 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="font-bold text-slate-900">{selectedProduct.name}</span>
+                      <span className="text-slate-400 font-mono ml-1.5">Réf: {selectedProduct.sku}</span>
+                    </div>
+                    <div className="flex items-center gap-2 font-mono">
+                      <span>Stock actuel : <strong className={selectedProduct.currentStock <= selectedProduct.alertThreshold ? 'text-amber-700' : 'text-slate-900'}>{selectedProduct.currentStock} {selectedProduct.unit}</strong></span>
+                      <span>•</span>
+                      <span>Prix Achat : <strong>{selectedProduct.purchasePrice.toLocaleString()} {business.currency}</strong></span>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* Movement Type */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Type d'opération *</label>
-                <select
-                  value={movementType}
-                  onChange={(e) => setMovementType(e.target.value as StockMovementType)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-800 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="in_purchase">➕ Entrée Achat / Réapprovisionnement fournisseur</option>
-                  <option value="out_manual">➖ Sortie manuelle (Usage interne / Don)</option>
-                  <option value="damaged_loss">❌ Perte / Casse / Produit avarié</option>
-                  <option value="inventory_adjustment">📋 Ajustement après inventaire physique</option>
-                  <option value="return_customer">↩️ Retour client en magasin</option>
-                </select>
-              </div>
+              {/* -------------------- MODE 1 : APPROVISIONNEMENT (+) -------------------- */}
+              {movementMode === 'in' && (
+                <div className="space-y-3.5 animate-in fade-in duration-150">
+                  
+                  {/* Quantity received */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-bold text-slate-700">
+                        Quantité livrée / reçue ({selectedProduct?.unit || 'unités'}) *
+                      </label>
+                      <span className="text-[10px] text-slate-500">Ajout au stock</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="1"
+                        required
+                        value={movementQty}
+                        onChange={(e) => setMovementQty(Math.max(1, Number(e.target.value)))}
+                        className="w-full bg-slate-50 border border-emerald-400 rounded-xl px-3 py-2 text-base font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+                    {/* Quick increment pills */}
+                    <div className="flex items-center gap-1.5 mt-2">
+                      <span className="text-[10px] text-slate-400 font-bold">Raccourcis :</span>
+                      {[5, 10, 20, 50, 100].map(q => (
+                        <button
+                          key={q}
+                          type="button"
+                          onClick={() => setMovementQty(q)}
+                          className="px-2 py-0.5 rounded-lg border border-slate-200 bg-white hover:bg-emerald-50 hover:text-emerald-800 text-[10px] font-bold text-slate-600 transition cursor-pointer"
+                        >
+                          +{q}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
-              {/* Quantity */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Quantité ({selectedProduct?.unit || 'unités'}) *
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  required
-                  value={movementQty}
-                  onChange={(e) => setMovementQty(Math.max(1, Number(e.target.value)))}
-                  className="w-full bg-slate-50 border border-blue-300 rounded-xl px-3 py-2 text-base font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+                  {/* Optional Purchase Price Update */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Prix d'achat unitaire ({business.currency})
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        placeholder={selectedProduct?.purchasePrice?.toString() || '0'}
+                        value={movementNewPrice}
+                        onChange={(e) => setMovementNewPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-800"
+                      />
+                      <span className="text-[10px] text-slate-400">Actualise le prix de revient si modifié</span>
+                    </div>
 
-              {/* Reason / Justification */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Motif / Justification *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex: Facture fournisseur #102, Réapprovisionnement seuil..."
-                  value={movementReason}
-                  onChange={(e) => setMovementReason(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Fournisseur / Distributeur
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Ex: Grossiste Ouaga, SODIBO..."
+                        value={movementSupplier}
+                        onChange={(e) => setMovementSupplier(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 text-xs text-slate-800"
+                      />
+                    </div>
+                  </div>
 
-              {/* Calculated Preview */}
-              {selectedProduct && (
-                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs flex justify-between font-semibold">
-                  <span className="text-slate-600">Nouveau stock projeté :</span>
-                  <span className="font-extrabold text-blue-800 text-sm">
-                    {movementType === 'out_manual' || movementType === 'damaged_loss'
-                      ? Math.max(0, selectedProduct.currentStock - Number(movementQty))
-                      : movementType === 'inventory_adjustment'
-                      ? Number(movementQty)
-                      : selectedProduct.currentStock + Number(movementQty)}{' '}
-                    {selectedProduct.unit}
-                  </span>
+                  {/* Expiry Date (DLC) & Batch number for new goods */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Date d'expiration / DLC (Facultatif)
+                      </label>
+                      <input
+                        type="date"
+                        value={movementNewExpiry}
+                        onChange={(e) => setMovementNewExpiry(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 text-xs text-slate-800"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        N° Lot arrivage (Facultatif)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Ex: LOT-2026-B4"
+                        value={movementBatchNumber}
+                        onChange={(e) => setMovementBatchNumber(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 text-xs text-slate-800"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Justification note */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Motif ou N° Bon de Livraison / Facture *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ex: Facture BL #492, Réapprovisionnement seuil..."
+                      value={movementReason}
+                      onChange={(e) => setMovementReason(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                  {/* Calculated Preview Card */}
+                  {selectedProduct && (
+                    <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs space-y-1 text-emerald-950">
+                      <div className="flex justify-between font-bold">
+                        <span>Stock après approvisionnement :</span>
+                        <span className="text-sm font-black text-emerald-700">
+                          {selectedProduct.currentStock + Number(movementQty)} {selectedProduct.unit} (+{movementQty})
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-[11px] text-emerald-800 pt-1 border-t border-emerald-200/60 font-mono">
+                        <span>Coût d'achat de l'arrivage :</span>
+                        <span className="font-bold">
+                          {(Number(movementQty) * (typeof movementNewPrice === 'number' && movementNewPrice > 0 ? movementNewPrice : selectedProduct.purchasePrice)).toLocaleString()} {business.currency}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
                 </div>
               )}
 
-              <div className="flex justify-end space-x-2 pt-2 border-t border-slate-200">
+              {/* -------------------- MODE 2 : DÉSTOCKAGE CASSE OU PÉRIMÉ (-) -------------------- */}
+              {movementMode === 'out' && (
+                <div className="space-y-3.5 animate-in fade-in duration-150">
+                  
+                  {/* Loss Reason Type Selector */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      Type de déstockage / Motif de la sortie *
+                    </label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {/* 1. Broken / Damaged */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLossReasonType('broken');
+                          setMovementType('damaged_loss');
+                          setMovementReason('Produit cassé / abîmé en rayon');
+                        }}
+                        className={`p-2.5 rounded-xl border text-left flex flex-col justify-between transition cursor-pointer ${
+                          lossReasonType === 'broken'
+                            ? 'bg-rose-50 border-rose-500 text-rose-950 shadow-xs ring-2 ring-rose-500/20'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-1.5 font-bold text-xs text-rose-700">
+                          <AlertOctagon className="h-4 w-4 shrink-0" />
+                          <span>Produit Cassé</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-1">Chute, choc ou détruit</p>
+                      </button>
+
+                      {/* 2. Expired */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLossReasonType('expired');
+                          setMovementType('expired_loss');
+                          setMovementReason('Produit périmé (date de péremption dépassée)');
+                        }}
+                        className={`p-2.5 rounded-xl border text-left flex flex-col justify-between transition cursor-pointer ${
+                          lossReasonType === 'expired'
+                            ? 'bg-rose-50 border-rose-500 text-rose-950 shadow-xs ring-2 ring-rose-500/20'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-1.5 font-bold text-xs text-rose-700">
+                          <AlertTriangle className="h-4 w-4 shrink-0" />
+                          <span>Produit Périmé</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-1">DLC / DLUO dépassée</p>
+                      </button>
+
+                      {/* 3. Avarié / Défectueux */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLossReasonType('damaged');
+                          setMovementType('damaged_loss');
+                          setMovementReason('Produit avarié / défaut de fabrication');
+                        }}
+                        className={`p-2.5 rounded-xl border text-left flex flex-col justify-between transition cursor-pointer ${
+                          lossReasonType === 'damaged'
+                            ? 'bg-rose-50 border-rose-500 text-rose-950 shadow-xs ring-2 ring-rose-500/20'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-1.5 font-bold text-xs text-amber-700">
+                          <ShieldAlert className="h-4 w-4 shrink-0" />
+                          <span>Avarié / Défaut</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-1">Altéré ou non conforme</p>
+                      </button>
+
+                      {/* 4. Perte / Vol */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLossReasonType('missing');
+                          setMovementType('out_manual');
+                          setMovementReason("Perte constatée / Écart d'inventaire négatif");
+                        }}
+                        className={`p-2.5 rounded-xl border text-left flex flex-col justify-between transition cursor-pointer ${
+                          lossReasonType === 'missing'
+                            ? 'bg-rose-50 border-rose-500 text-rose-950 shadow-xs ring-2 ring-rose-500/20'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-1.5 font-bold text-xs text-slate-800">
+                          <Search className="h-4 w-4 shrink-0" />
+                          <span>Perte / Vol</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-1">Manquant inexpliqué</p>
+                      </button>
+
+                      {/* 5. Usage interne / Don */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLossReasonType('internal');
+                          setMovementType('out_manual');
+                          setMovementReason('Consommation interne boutique / Dégustation');
+                        }}
+                        className={`p-2.5 rounded-xl border text-left flex flex-col justify-between transition cursor-pointer ${
+                          lossReasonType === 'internal'
+                            ? 'bg-rose-50 border-rose-500 text-rose-950 shadow-xs ring-2 ring-rose-500/20'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-1.5 font-bold text-xs text-slate-800">
+                          <Package className="h-4 w-4 shrink-0" />
+                          <span>Usage Interne</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-1">Test ou consommation</p>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Quantity to remove */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-bold text-slate-700">
+                        Quantité à déstocker ({selectedProduct?.unit || 'unités'}) *
+                      </label>
+                      {selectedProduct && (
+                        <span className="text-[11px] font-bold text-slate-500">
+                          Max disponible : {selectedProduct.currentStock} {selectedProduct.unit}
+                        </span>
+                      )}
+                    </div>
+                    <input
+                      type="number"
+                      min="1"
+                      max={selectedProduct ? Math.max(1, selectedProduct.currentStock) : undefined}
+                      required
+                      value={movementQty}
+                      onChange={(e) => setMovementQty(Math.max(1, Number(e.target.value)))}
+                      className="w-full bg-slate-50 border border-rose-400 rounded-xl px-3 py-2 text-base font-black text-rose-900 focus:outline-none focus:ring-2 focus:ring-rose-500"
+                    />
+                    {selectedProduct && movementQty > selectedProduct.currentStock && (
+                      <p className="text-[11px] font-bold text-rose-600 mt-1 flex items-center gap-1">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        Attention : la quantité saisie dépasse le stock disponible en magasin !
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Reason text */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Détails / Circonstances de la perte *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ex: 2 bouteilles tombées de l'étagère, yaourt périmé le 05/11..."
+                      value={movementReason}
+                      onChange={(e) => setMovementReason(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-500"
+                    />
+                  </div>
+
+                  {/* Financial Loss Impact Card */}
+                  {selectedProduct && (
+                    <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs space-y-2 text-rose-950">
+                      <div className="flex justify-between font-bold">
+                        <span>Stock restant après déstockage :</span>
+                        <span className="text-sm font-black text-rose-800">
+                          {Math.max(0, selectedProduct.currentStock - Number(movementQty))} {selectedProduct.unit} (-{movementQty})
+                        </span>
+                      </div>
+                      <div className="flex justify-between font-mono pt-1.5 border-t border-rose-200 text-[11px]">
+                        <span className="font-bold text-rose-900">Perte financière réelle (Prix d'achat) :</span>
+                        <span className="font-black text-rose-700 text-sm">
+                          {(Number(movementQty) * selectedProduct.purchasePrice).toLocaleString()} {business.currency}
+                        </span>
+                      </div>
+
+                      {/* Checkbox to record loss into expenses */}
+                      <div className="pt-2 border-t border-rose-200/80">
+                        <label className="flex items-start space-x-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={recordLossAsExpense}
+                            onChange={(e) => setRecordLossAsExpense(e.target.checked)}
+                            className="mt-0.5 h-4 w-4 rounded border-rose-300 text-rose-600 focus:ring-rose-500"
+                          />
+                          <span className="text-[11px] font-semibold text-rose-900 leading-tight">
+                            Enregistrer également cette perte de <strong>{(Number(movementQty) * selectedProduct.purchasePrice).toLocaleString()} {business.currency}</strong> dans le journal des Dépenses de la boutique (catégorie Pertes & Rebuts)
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+              )}
+
+              {/* -------------------- MODE 3 : INVENTAIRE PHYSIQUE (=) -------------------- */}
+              {movementMode === 'inventory' && (
+                <div className="space-y-3.5 animate-in fade-in duration-150">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Stock physique réel compté en rayon *
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      required
+                      value={inventoryCount}
+                      onChange={(e) => setInventoryCount(Math.max(0, Number(e.target.value)))}
+                      className="w-full bg-slate-50 border border-indigo-400 rounded-xl px-3 py-2 text-base font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Motif de la régularisation *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ex: Inventaire mensuel, Recalibrage fin de journée..."
+                      value={movementReason}
+                      onChange={(e) => setMovementReason(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  {selectedProduct && (
+                    <div className="p-3.5 bg-indigo-50 border border-indigo-200 rounded-xl text-xs space-y-1.5 text-indigo-950">
+                      <div className="flex justify-between font-semibold">
+                        <span>Stock informatique actuel :</span>
+                        <span className="font-bold">{selectedProduct.currentStock} {selectedProduct.unit}</span>
+                      </div>
+                      <div className="flex justify-between font-semibold">
+                        <span>Stock physique constaté :</span>
+                        <span className="font-black text-indigo-700">{inventoryCount} {selectedProduct.unit}</span>
+                      </div>
+                      <div className="flex justify-between font-mono font-bold pt-1.5 border-t border-indigo-200">
+                        <span>Écart d'inventaire :</span>
+                        <span className={inventoryCount >= selectedProduct.currentStock ? 'text-emerald-700' : 'text-rose-700'}>
+                          {inventoryCount >= selectedProduct.currentStock ? '+' : ''}{inventoryCount - selectedProduct.currentStock} {selectedProduct.unit} ({inventoryCount >= selectedProduct.currentStock ? 'Surplus' : 'Déficit'})
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Footer Actions */}
+              <div className="flex justify-between items-center pt-3 border-t border-slate-200 shrink-0">
                 <button
                   type="button"
                   onClick={() => setShowMovementModal(false)}
-                  className="px-4 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-xl"
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer"
                 >
                   Annuler
                 </button>
+
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-bold rounded-xl shadow-xs"
+                  className={`px-5 py-2.5 text-white text-xs sm:text-sm font-black rounded-xl shadow-md transition flex items-center space-x-2 cursor-pointer ${
+                    movementMode === 'in'
+                      ? 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800'
+                      : movementMode === 'out'
+                      ? 'bg-rose-600 hover:bg-rose-700 active:bg-rose-800'
+                      : 'bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800'
+                  }`}
                 >
-                  Valider le mouvement
+                  {movementMode === 'in' && <PlusCircle className="h-4 w-4" />}
+                  {movementMode === 'out' && <MinusCircle className="h-4 w-4" />}
+                  {movementMode === 'inventory' && <ClipboardCheck className="h-4 w-4" />}
+                  <span>
+                    {movementMode === 'in' && 'Valider l\'Entrée (+)'}
+                    {movementMode === 'out' && 'Valider la Perte / Déstockage (-)'}
+                    {movementMode === 'inventory' && 'Régulariser l\'Inventaire (=)'}
+                  </span>
                 </button>
               </div>
+
             </form>
           </div>
         </div>

@@ -24,6 +24,18 @@ import { InvoicesView } from './components/invoices/InvoicesView';
 import { AvoirsView } from './components/avoirs/AvoirsView';
 import { CustomerDisplayView } from './components/pos/CustomerDisplayView';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
+import { PosDigiSoliaBridge } from './digisolia/features/PosDigiSoliaBridge';
+import {
+  AboutView,
+  DafHomeView,
+  DafSettingsView,
+  DigiSoliaAdminView,
+  FeedbackView,
+  PresentationView,
+  SupportCenterView,
+  UserProfileView,
+  useDigiSolia,
+} from './digisolia';
 
 const MainLayout: React.FC = () => {
   const { 
@@ -37,6 +49,7 @@ const MainLayout: React.FC = () => {
     setUserToSwitchWithPin,
     switchUser
   } = useApp();
+  const { hasSeenPresentation } = useDigiSolia();
 
   // If the user hasn't authenticated their business and isn't on the platform admin screen, show company login portal
   if (!isBusinessAuthenticated && activeTab !== 'admin') {
@@ -58,12 +71,24 @@ const MainLayout: React.FC = () => {
     );
   }
 
+  // Module A: Show DigiSolia Presentation page on first authenticated use
+  if (!hasSeenPresentation && activeTab !== 'admin') {
+    return (
+      <PresentationView
+        isFirstRunModal
+        onStart={() => {
+          setActiveTab('pos');
+        }}
+      />
+    );
+  }
+
   const isOwner = currentUser.role === 'owner' || currentUser.role === 'admin';
   const isManager = currentUser.role === 'manager' || isOwner;
   const isStockManager = currentUser.role === 'stock_manager' || isManager;
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col text-slate-900 font-sans antialiased selection:bg-blue-600 selection:text-white">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col text-slate-900 dark:text-slate-100 font-sans antialiased selection:bg-blue-600 selection:text-white">
       {/* Top Navbar */}
       <Navbar />
 
@@ -72,7 +97,7 @@ const MainLayout: React.FC = () => {
         <Sidebar />
 
         {/* Main Content Area */}
-        <main className="flex-1 overflow-y-auto pb-20 lg:pb-0 bg-slate-50">
+        <main className="flex-1 overflow-y-auto pb-20 lg:pb-0 bg-slate-50 dark:bg-slate-950">
           <ErrorBoundary 
             fallbackTitle="Interruption d'affichage sur cette page"
             onReset={() => setActiveTab('pos')}
@@ -97,6 +122,16 @@ const MainLayout: React.FC = () => {
               />
             )}
             {activeTab === 'admin' && (isPlatformAdminUnlocked ? <PlatformAdminView /> : <PosView />)}
+
+            {/* Modules transversaux DIGISOLIA APP FRAMEWORK */}
+            {activeTab === 'daf_home' && <DafHomeView />}
+            {activeTab === 'daf_presentation' && <PresentationView />}
+            {activeTab === 'daf_support' && <SupportCenterView />}
+            {activeTab === 'daf_feedback' && <FeedbackView />}
+            {activeTab === 'daf_profile' && <UserProfileView />}
+            {activeTab === 'daf_settings' && <DafSettingsView />}
+            {activeTab === 'daf_about' && <AboutView />}
+            {activeTab === 'daf_admin' && (isPlatformAdminUnlocked ? <DigiSoliaAdminView /> : <DafHomeView />)}
           </ErrorBoundary>
         </main>
       </div>
@@ -137,7 +172,9 @@ export default function App() {
   return (
     <ErrorBoundary fallbackTitle="Interruption du système BizPilot">
       <AppProvider>
-        <MainLayout />
+        <PosDigiSoliaBridge>
+          <MainLayout />
+        </PosDigiSoliaBridge>
       </AppProvider>
     </ErrorBoundary>
   );

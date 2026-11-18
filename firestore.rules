@@ -1,14 +1,190 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper function
+
+    // ===============================================================
+    // FONCTIONS DE SÉCURITÉ & CONTRÔLE D'ACCÈS (RBAC)
+    // ===============================================================
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    // Default allow for authenticated or demo user session in web client
-    match /{document=**} {
-      allow read, write: if true;
+    function isProjectOwner() {
+      return isAuthenticated()
+        && request.auth.token.email == 'akericsankara2@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    function hasAdminRecord() {
+      return isAuthenticated()
+        && exists(/databases/$(database)/documents/administrators/$(request.auth.uid))
+        && get(/databases/$(database)/documents/administrators/$(request.auth.uid)).data.active == true;
+    }
+
+    function adminRole() {
+      return get(/databases/$(database)/documents/administrators/$(request.auth.uid)).data.role;
+    }
+
+    function isSuperAdmin() {
+      return isProjectOwner() || (hasAdminRecord() && adminRole() == 'super_admin');
+    }
+
+    function isAppAdminOrSuper() {
+      return isSuperAdmin() || (hasAdminRecord() && adminRole() == 'app_admin');
+    }
+
+    function isDafStaff() {
+      return isSuperAdmin() || (hasAdminRecord() && adminRole() in ['app_admin', 'support_agent']);
+    }
+
+    function isStatsReaderOrHigher() {
+      return isDafStaff() || (hasAdminRecord() && adminRole() == 'stats_reader');
+    }
+
+    function isNonEmptyString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    // ===============================================================
+    // TESTS DE CONNECTIVITÉ FIRESTORE
+    // ===============================================================
+    match /test/connection {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /system/connection_test {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // ===============================================================
+    // DIGISOLIA APP FRAMEWORK (DAF) — COLLECTIONS TRANSVERSALES
+    // ===============================================================
+    match /apps/{appId} {
+      allow read: if isAuthenticated();
+      allow create: if isAppAdminOrSuper()
+        || (isAuthenticated()
+            && appId in ['digisolia-pos', 'prof-planning', 'digisolia-hotel']
+            && request.resource.data.appId == appId
+            && isNonEmptyString(request.resource.data.name, 2, 100)
+            && isNonEmptyString(request.resource.data.version, 1, 30)
+            && request.resource.data.status in ['active', 'maintenance', 'beta']);
+      allow update, delete: if isAppAdminOrSuper();
+
+      // Sous-collection Avis, Suggestions, Bugs & Réclamations
+      match /feedback/{feedbackId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated()
+          && request.resource.data.appId == appId
+          && isNonEmptyString(request.resource.data.userId, 1, 120)
+          && isNonEmptyString(request.resource.data.message, 10, 2000)
+          && request.resource.data.category in ['avis', 'suggestion', 'bug', 'reclamation']
+          && request.resource.data.status == 'en_attente'
+          && (!('rating' in request.resource.data)
+              || request.resource.data.rating == null
+              || (request.resource.data.rating is number
+                  && request.resource.data.rating >= 1
+                  && request.resource.data.rating <= 5));
+        // Un utilisateur standard ne peut JAMAIS modifier le statut de traitement
+        allow update: if isDafStaff()
+          && request.resource.data.appId == resource.data.appId
+          && request.resource.data.status in ['en_attente', 'en_cours', 'resolu', 'rejete'];
+        allow delete: if isSuperAdmin();
+      }
+
+      // Sous-collection Demandes d'Assistance Technique
+      match /support/{ticketId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated()
+          && request.resource.data.appId == appId
+          && isNonEmptyString(request.resource.data.userId, 1, 120)
+          && isNonEmptyString(request.resource.data.subject, 4, 160)
+          && isNonEmptyString(request.resource.data.message, 15, 2500)
+          && request.resource.data.issueType in ['assistance', 'technique', 'compte', 'facturation', 'autre']
+          && request.resource.data.priority in ['normale', 'urgente']
+          && request.resource.data.status == 'en_attente';
+        // Seuls les agents de support / administrateurs peuvent changer le statut
+        allow update: if isDafStaff()
+          && request.resource.data.appId == resource.data.appId
+          && request.resource.data.status in ['en_attente', 'en_cours', 'resolu', 'rejete'];
+        allow delete: if isSuperAdmin();
+      }
+    }
+
+    match /administrators/{adminId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    match /notifications/{notifId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAppAdminOrSuper();
+    }
+
+    match /admin_logs/{logId} {
+      allow read: if isStatsReaderOrHigher();
+      allow create: if isDafStaff()
+        && request.resource.data.keys().hasAll([
+          'actorId', 'actorName', 'actorRole', 'action', 'targetType', 'targetId', 'createdAt'
+        ]);
+      allow update, delete: if false; // Journal d'audit immuable
+    }
+
+    // ===============================================================
+    // COLLECTIONS MÉTIER EXISTANTES (DigiSolia POS / BizPilot BF)
+    // Préservées sans rupture pour les sessions multi-boutiques existantes
+    // ===============================================================
+    match /businesses/{businessId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated()
+        && (!('role' in request.resource.data)
+            || !(request.resource.data.role in ['super_admin', 'app_admin']));
+      allow delete: if isAuthenticated();
+    }
+
+    match /products/{productId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /sales/{saleId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /stock_movements/{movementId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /customers/{customerId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /customer_payments/{paymentId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /expenses/{expenseId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /cash_sessions/{sessionId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /quotations/{quotationId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /invoices/{invoiceId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /avoirs/{avoirId} {
+      allow read, write: if isAuthenticated();
     }
   }
 }

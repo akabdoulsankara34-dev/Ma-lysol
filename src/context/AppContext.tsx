@@ -138,7 +138,14 @@ interface AppContextType {
     productId: string,
     type: StockMovementType,
     quantity: number,
-    reason: string
+    reason: string,
+    extraOptions?: {
+      newPurchasePrice?: number;
+      newExpiryDate?: string;
+      batchNumber?: string;
+      supplier?: string;
+      recordAsExpense?: boolean;
+    }
   ) => Promise<void>;
   stockMovements: StockMovement[];
   applyExpiryDiscount: (productId: string, discountPercentage: number) => Promise<void>;
@@ -2227,7 +2234,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     productId: string,
     type: StockMovementType,
     quantity: number,
-    reason: string
+    reason: string,
+    extraOptions?: {
+      newPurchasePrice?: number;
+      newExpiryDate?: string;
+      batchNumber?: string;
+      supplier?: string;
+      recordAsExpense?: boolean;
+    }
   ) => {
     const prod = products.find(p => p.id === productId);
     if (!prod) return;
@@ -2237,7 +2251,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (type === 'in_purchase' || type === 'return_customer') {
       nextStock = prevStock + quantity;
-    } else if (type === 'out_manual' || type === 'damaged_loss' || type === 'sale') {
+    } else if (type === 'out_manual' || type === 'damaged_loss' || type === 'expired_loss' || type === 'sale') {
       nextStock = Math.max(0, prevStock - quantity);
     } else if (type === 'inventory_adjustment') {
       nextStock = quantity;
@@ -2262,8 +2276,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setStockMovements(prev => [newMovement, ...prev]);
-    await updateProduct(productId, { currentStock: nextStock });
+
+    // Apply product updates (stock + optional price, expiry, lot, supplier)
+    const productUpdates: Partial<Product> = { currentStock: nextStock };
+    if (extraOptions?.newPurchasePrice !== undefined && extraOptions.newPurchasePrice > 0) {
+      productUpdates.purchasePrice = extraOptions.newPurchasePrice;
+    }
+    if (extraOptions?.newExpiryDate !== undefined) {
+      productUpdates.expiryDate = extraOptions.newExpiryDate || undefined;
+    }
+    if (extraOptions?.batchNumber !== undefined) {
+      productUpdates.batchNumber = extraOptions.batchNumber || undefined;
+    }
+    if (extraOptions?.supplier !== undefined) {
+      productUpdates.supplier = extraOptions.supplier || undefined;
+    }
+
+    await updateProduct(productId, productUpdates);
     await syncMutation('stock_movements', movementId, 'set', newMovement, `Mouvement stock ${prod.name}`);
+
+    // If requested and loss occurred, record as financial loss in expenses
+    if (extraOptions?.recordAsExpense && (type === 'damaged_loss' || type === 'expired_loss')) {
+      const lostQty = Math.max(0, prevStock - nextStock);
+      const lossCost = lostQty * (prod.purchasePrice || 0);
+      if (lossCost > 0) {
+        try {
+          await addExpense({
+            category: 'other',
+            customCategory: type === 'damaged_loss' ? 'Perte Casse / Avarie' : 'Perte Péremption / DLC Dépassée',
+            amount: lossCost,
+            paymentMethod: 'cash',
+            beneficiary: `Sortie stock : ${prod.name}`,
+            notes: `Perte sur ${lostQty} ${prod.unit} (${reason}). Enregistré par ${currentUser.name}`
+          });
+        } catch (e) {
+          console.warn('Auto expense recording error on damaged/expired stock:', e);
+        }
+      }
+    }
   };
 
   // Customer Management

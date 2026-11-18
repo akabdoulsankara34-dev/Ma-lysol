@@ -18,7 +18,14 @@ import {
   Ticket,
   Tv,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Home,
+  Headphones,
+  MessageSquarePlus,
+  User,
+  Info,
+  Sparkles,
+  Sliders
 } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
@@ -193,6 +200,46 @@ export const Sidebar: React.FC = () => {
             </button>
           );
         })}
+      </div>
+
+      {/* Écosystème DigiSolia (DAF Modules Communs) */}
+      <div className="mt-5 pt-4 border-t border-slate-800 w-full space-y-1">
+        {!isCollapsed && (
+          <p className="px-2 pb-1 text-[10px] font-bold uppercase text-slate-500 tracking-wider">
+            Écosystème DigiSolia
+          </p>
+        )}
+        {[
+          { id: 'daf_home' as const, label: 'Accueil DigiSolia', icon: Home, allowed: true },
+          { id: 'daf_presentation' as const, label: 'Présentation', icon: Sparkles, allowed: true },
+          { id: 'daf_support' as const, label: 'Centre d’assistance', icon: Headphones, allowed: true },
+          { id: 'daf_feedback' as const, label: 'Donner mon avis', icon: MessageSquarePlus, allowed: true },
+          { id: 'daf_profile' as const, label: 'Mon profil', icon: User, allowed: true },
+          { id: 'daf_settings' as const, label: 'Paramètres DigiSolia', icon: Sliders, allowed: true },
+          { id: 'daf_about' as const, label: 'À propos', icon: Info, allowed: true },
+          { id: 'daf_admin' as const, label: 'DigiSolia Admin', icon: ShieldCheck, allowed: isPlatformAdminUnlocked },
+        ]
+          .filter((item) => item.allowed)
+          .map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                id={`sidebar-link-${item.id}`}
+                onClick={() => setActiveTab(item.id)}
+                title={isCollapsed ? item.label : undefined}
+                className={`w-full flex items-center ${isCollapsed ? 'justify-center py-2.5' : 'space-x-2.5 px-3 py-2'} rounded-lg text-xs font-medium transition-all ${
+                  isActive
+                    ? 'bg-[#2783C7] text-white font-semibold shadow-sm'
+                    : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                }`}
+              >
+                <Icon className={`h-[17px] w-[17px] shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                {!isCollapsed && <span className="truncate">{item.label}</span>}
+              </button>
+            );
+          })}
       </div>
 
       {/* Low stock alert box at bottom of sidebar */}

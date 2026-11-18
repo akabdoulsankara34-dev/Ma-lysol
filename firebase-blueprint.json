@@ -176,6 +176,113 @@
         "notes": { "type": "string" }
       },
       "required": ["numero", "montant", "statut", "dateCreation"]
+    },
+    "apps": {
+      "title": "DigiSoliaApp",
+      "description": "Registered product in the DigiSolia App Framework ecosystem",
+      "type": "object",
+      "properties": {
+        "appId": { "type": "string" },
+        "name": { "type": "string" },
+        "shortName": { "type": "string" },
+        "description": { "type": "string" },
+        "version": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "maintenance", "beta"] },
+        "category": { "type": "string" },
+        "usersCount": { "type": "number" },
+        "lastUpdatedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["appId", "name", "version", "status"]
+    },
+    "apps/{appId}/feedback": {
+      "title": "DigiSoliaFeedback",
+      "description": "User rating, comment, suggestion, bug report, or complaint scoped by appId",
+      "type": "object",
+      "properties": {
+        "appId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "category": { "type": "string", "enum": ["avis", "suggestion", "bug", "reclamation"] },
+        "rating": { "type": "number" },
+        "subject": { "type": "string" },
+        "message": { "type": "string" },
+        "status": { "type": "string", "enum": ["en_attente", "en_cours", "resolu", "rejete"] },
+        "adminResponse": { "type": "string" },
+        "reviewedBy": { "type": "string" },
+        "reviewedAt": { "type": "string", "format": "date-time" },
+        "clientFingerprint": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["appId", "userId", "category", "message", "status", "createdAt"]
+    },
+    "apps/{appId}/support": {
+      "title": "DigiSoliaSupportTicket",
+      "description": "Technical assistance or support request scoped by appId",
+      "type": "object",
+      "properties": {
+        "appId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "issueType": { "type": "string", "enum": ["assistance", "technique", "compte", "facturation", "autre"] },
+        "priority": { "type": "string", "enum": ["normale", "urgente"] },
+        "subject": { "type": "string" },
+        "message": { "type": "string" },
+        "appVersion": { "type": "string" },
+        "status": { "type": "string", "enum": ["en_attente", "en_cours", "resolu", "rejete"] },
+        "adminResponse": { "type": "string" },
+        "assignedTo": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["appId", "userId", "issueType", "subject", "message", "status", "createdAt"]
+    },
+    "administrators": {
+      "title": "DigiSoliaAdministrator",
+      "description": "Centralized DigiSolia Admin accounts with RBAC roles",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["super_admin", "app_admin", "support_agent", "stats_reader"] },
+        "assignedApps": { "type": "array" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "email", "role", "active"]
+    },
+    "notifications": {
+      "title": "DigiSoliaNotification",
+      "description": "Broadcast notifications across DigiSolia applications",
+      "type": "object",
+      "properties": {
+        "appId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string", "enum": ["info", "warning", "success", "urgent"] },
+        "targetAudience": { "type": "string", "enum": ["all", "admins", "owners"] },
+        "createdBy": { "type": "string" },
+        "createdByName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["appId", "title", "message", "type", "createdAt"]
+    },
+    "admin_logs": {
+      "title": "DigiSoliaAdminLog",
+      "description": "Immutable audit log of administrative actions",
+      "type": "object",
+      "properties": {
+        "actorId": { "type": "string" },
+        "actorName": { "type": "string" },
+        "actorRole": { "type": "string" },
+        "action": { "type": "string" },
+        "targetType": { "type": "string" },
+        "targetId": { "type": "string" },
+        "details": { "type": "string" },
+        "appId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["actorId", "actorName", "actorRole", "action", "targetType", "targetId", "createdAt"]
     }
   }
 }

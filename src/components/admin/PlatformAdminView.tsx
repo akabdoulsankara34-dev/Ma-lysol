@@ -39,9 +39,11 @@ import {
   Check,
   Store,
   Cloud,
-  CloudOff
+  CloudOff,
+  Layers
 } from 'lucide-react';
 import { UserRole, Business } from '../../types';
+import { DigiSoliaAdminView } from '../../digisolia';
 
 export const PlatformAdminView: React.FC = () => {
   const { 
@@ -70,7 +72,7 @@ export const PlatformAdminView: React.FC = () => {
     summary
   } = useApp();
 
-  const [activeAdminTab, setActiveAdminTab] = useState<'businesses' | 'overview' | 'users' | 'store' | 'audit' | 'tools'>('businesses');
+  const [activeAdminTab, setActiveAdminTab] = useState<'businesses' | 'overview' | 'users' | 'store' | 'audit' | 'tools' | 'digisolia'>('businesses');
   const [syncStatusMsg, setSyncStatusMsg] = useState<string | null>(null);
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
 
@@ -280,7 +282,19 @@ export const PlatformAdminView: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <button
+              onClick={() => setActiveAdminTab(activeAdminTab === 'digisolia' ? 'businesses' : 'digisolia')}
+              className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition border cursor-pointer ${
+                activeAdminTab === 'digisolia'
+                  ? 'bg-[#2783C7] text-white border-sky-400 shadow-sm'
+                  : 'bg-[#163B65] hover:bg-[#1E4C80] text-white border-sky-500/40'
+              }`}
+            >
+              <Layers className="h-4 w-4" />
+              <span>DigiSolia Admin</span>
+            </button>
+
             <button
               onClick={handleForceSync}
               className="flex items-center space-x-2 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-200 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition border border-slate-700 cursor-pointer"
@@ -320,6 +334,18 @@ export const PlatformAdminView: React.FC = () => {
         >
           <Building2 className="h-4 w-4" />
           <span>Entreprises & Codes ({allBusinesses.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveAdminTab('digisolia')}
+          className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition shrink-0 cursor-pointer ${
+            activeAdminTab === 'digisolia'
+              ? 'bg-[#163B65] text-white shadow-xs'
+              : 'text-[#163B65] bg-sky-50 hover:bg-sky-100 border border-sky-200'
+          }`}
+        >
+          <Layers className="h-4 w-4" />
+          <span>DigiSolia Admin</span>
         </button>
 
         <button
@@ -1012,6 +1038,13 @@ export const PlatformAdminView: React.FC = () => {
               <span>Restaurer les Données Démo</span>
             </button>
           </div>
+        </div>
+      )}
+
+      {/* 7. DIGISOLIA ADMIN (MULTI-APPLICATIONS & FRAMEWORK) */}
+      {activeAdminTab === 'digisolia' && (
+        <div className="-mx-4 sm:-mx-6 lg:-mx-8">
+          <DigiSoliaAdminView />
         </div>
       )}
 
