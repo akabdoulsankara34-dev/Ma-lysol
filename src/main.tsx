@@ -5,19 +5,25 @@ import App from './App.tsx';
 import './index.css';
 import './hooks/usePWAInstall';
 
-// Enregistre le Service Worker PWA (Workbox via vite-plugin-pwa) en production et en aperçu
+// Enregistre le Service Worker PWA en production (Workbox) et en dev/aperçu sans conflit HMR
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-  registerSW({
-    immediate: true,
-    onRegisteredSW(_swUrl, registration) {
-      if (registration) {
-        registration.update().catch(() => null);
-      }
-    },
-    onRegisterError(error) {
-      console.warn('[PWA] Enregistrement Service Worker :', error);
-    },
-  });
+  if (import.meta.env.PROD) {
+    registerSW({
+      immediate: true,
+      onRegisteredSW(_swUrl, registration) {
+        if (registration) {
+          registration.update().catch(() => null);
+        }
+      },
+      onRegisterError(error) {
+        console.warn('[PWA] Enregistrement Service Worker :', error);
+      },
+    });
+  } else {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => null);
+    });
+  }
 }
 
 createRoot(document.getElementById('root')!).render(
