@@ -120,8 +120,8 @@ export const DigiSoliaAdminView: React.FC = () => {
     let unsubLogs: (() => void) | undefined;
 
     (async () => {
-      await ensureFirebaseAuth();
-      if (cancelled) return;
+      const fbUser = await ensureFirebaseAuth();
+      if (cancelled || !fbUser) return;
       await dafFirebaseService.ensureAppCatalogRegistered(host.appId).catch(() => null);
       if (cancelled) return;
 
@@ -155,8 +155,8 @@ export const DigiSoliaAdminView: React.FC = () => {
     const unsubs: (() => void)[] = [];
 
     (async () => {
-      await ensureFirebaseAuth();
-      if (cancelled) return;
+      const fbUser = await ensureFirebaseAuth();
+      if (cancelled || !fbUser) return;
       for (const appId of trackedAppIds) {
         unsubs.push(
           dafFirebaseService.subscribeAppFeedback(appId, (items) => {
@@ -175,7 +175,7 @@ export const DigiSoliaAdminView: React.FC = () => {
       cancelled = true;
       unsubs.forEach((u) => u());
     };
-  }, [host.isOnline, trackedAppIds]);
+  }, [host.isOnline, trackedAppIds, firebaseAuthEmail]);
 
   const allFeedback = useMemo(() => {
     const list = Object.values(feedbackByApp).flat();
@@ -376,12 +376,14 @@ export const DigiSoliaAdminView: React.FC = () => {
     setIsConnectingGoogle(true);
     try {
       const fbUser = await signInAdminWithGoogle();
-      if (fbUser.email) {
+      if (fbUser?.email) {
         await dafFirebaseService
           .bootstrapCurrentAuthAsSuperAdmin(fbUser.displayName || 'Super Admin', fbUser.email)
           .catch(() => null);
+        showTempNotice(`Connecté en tant que ${fbUser.email}.`);
+      } else {
+        showTempNotice('Redirection vers Google en cours pour finaliser la connexion...');
       }
-      showTempNotice(`Connecté en tant que ${fbUser.email || 'Administrateur Google'}.`);
     } catch (err) {
       showTempNotice(
         err instanceof Error ? err.message : 'Connexion Google annulée ou bloquée par le navigateur.'

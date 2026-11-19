@@ -5,7 +5,8 @@ import {
   KeyRound, 
   ArrowRight, 
   AlertCircle,
-  RefreshCw
+  RefreshCw,
+  Cloud
 } from 'lucide-react';
 import { PWAInstallButton } from '../common/PWAInstallButton';
 
@@ -13,12 +14,16 @@ export const CompanyAccessPortal: React.FC = () => {
   const { 
     authenticateBusiness, 
     setShowAdminPinModal,
-    isOnline
+    isOnline,
+    hasFirebaseSession,
+    connectGoogleAdminSync,
+    forceSyncCloudData,
   } = useApp();
 
   const [accessCode, setAccessCode] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isConnectingCloud, setIsConnectingCloud] = useState(false);
   const [logoClickCount, setLogoClickCount] = useState(0);
 
   // Discreet admin trigger: 3 clicks on logo opens Admin PIN prompt
@@ -87,9 +92,13 @@ export const CompanyAccessPortal: React.FC = () => {
         <div className="flex items-center gap-2">
           <PWAInstallButton variant="dark-portal" />
           <div className="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700/80 text-xs text-slate-300">
-            <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            <span className={`w-2 h-2 rounded-full ${!isOnline ? 'bg-amber-400' : hasFirebaseSession ? 'bg-emerald-400' : 'bg-amber-400'}`} />
             <span className="hidden sm:inline font-medium">
-              {isOnline ? 'Cloud Firestore Actif' : 'Mode Hors-ligne'}
+              {!isOnline
+                ? 'Mode Hors-ligne'
+                : hasFirebaseSession
+                ? 'Cloud Firestore Actif'
+                : 'Cloud en attente'}
             </span>
           </div>
         </div>
@@ -174,12 +183,43 @@ export const CompanyAccessPortal: React.FC = () => {
           </div>
 
           {/* Clean Footer Notice */}
-          <div className="mt-6 pt-5 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
+          <div className="mt-6 pt-5 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
             <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-              <span>{isOnline ? 'Prêt pour synchronisation Firestore Cloud' : 'Mode local hors-ligne'}</span>
+              <span className={`w-2 h-2 rounded-full ${!isOnline ? 'bg-amber-400' : hasFirebaseSession ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+              <span>
+                {!isOnline
+                  ? 'Mode local hors-ligne'
+                  : hasFirebaseSession
+                  ? 'Synchronisation Firestore Cloud active'
+                  : 'Connexion Cloud requise pour charger une nouvelle boutique'}
+              </span>
             </div>
-            <span className="text-slate-400">BizPilot BF v2.5</span>
+            {isOnline && !hasFirebaseSession ? (
+              <button
+                type="button"
+                disabled={isConnectingCloud}
+                onClick={async () => {
+                  setIsConnectingCloud(true);
+                  try {
+                    const res = await connectGoogleAdminSync();
+                    if (res.success) {
+                      await forceSyncCloudData();
+                      setErrorMsg(null);
+                    } else {
+                      setErrorMsg(res.message);
+                    }
+                  } finally {
+                    setIsConnectingCloud(false);
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 font-semibold transition cursor-pointer disabled:opacity-50"
+              >
+                <Cloud className="h-3.5 w-3.5" />
+                <span>{isConnectingCloud ? 'Connexion...' : 'Connexion Cloud Google'}</span>
+              </button>
+            ) : (
+              <span className="text-slate-400">BizPilot BF v2.5</span>
+            )}
           </div>
         </div>
       </div>

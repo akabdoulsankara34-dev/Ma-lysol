@@ -4,6 +4,10 @@ import {
   getAuth,
   signInAnonymously,
   onAuthStateChanged,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   User as FirebaseUser,
 } from 'firebase/auth';
 import firebaseConfigJson from '../../firebase-applet-config.json';
@@ -31,7 +35,22 @@ export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getA
 export const auth = getAuth(app);
 
 let lastFirebaseAuthError: string | null = null;
+let anonymousAuthDisabled = false;
 let pendingAuthPromise: Promise<FirebaseUser | null> | null = null;
+
+// Complete any pending mobile redirect sign-in on startup
+const redirectCheckPromise = getRedirectResult(auth)
+  .then((cred) => {
+    if (cred?.user) {
+      lastFirebaseAuthError = null;
+    }
+    return cred?.user || null;
+  })
+  .catch((err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    lastFirebaseAuthError = msg;
+    return null;
+  });
 
 onAuthStateChanged(auth, (user) => {
   if (user) {
@@ -43,10 +62,20 @@ export function getLastFirebaseAuthError(): string | null {
   return lastFirebaseAuthError;
 }
 
+export function isAnonymousAuthDisabled(): boolean {
+  return anonymousAuthDisabled;
+}
+
 export const ensureFirebaseAuth = async (): Promise<FirebaseUser | null> => {
+  await redirectCheckPromise.catch(() => null);
+
   if (auth.currentUser) {
     lastFirebaseAuthError = null;
     return auth.currentUser;
+  }
+
+  if (anonymousAuthDisabled) {
+    return null;
   }
 
   if (pendingAuthPromise) {
@@ -58,10 +87,20 @@ export const ensureFirebaseAuth = async (): Promise<FirebaseUser | null> => {
       const cred = await signInAnonymously(auth);
       lastFirebaseAuthError = null;
       return cred.user;
-    } catch (err) {
+    } catch (err: any) {
+      const code = err?.code || '';
       const msg = err instanceof Error ? err.message : String(err);
-      lastFirebaseAuthError = msg;
-      console.warn('Anonymous auth note (proceeding with Firestore):', msg);
+      if (
+        code === 'auth/admin-restricted-operation' ||
+        code === 'auth/operation-not-allowed' ||
+        msg.includes('ADMIN_ONLY_OPERATION') ||
+        msg.includes('admin-restricted-operation')
+      ) {
+        anonymousAuthDisabled = true;
+        lastFirebaseAuthError = 'Connexion Google Administrateur requise pour la synchronisation Cloud multi-appareils.';
+      } else {
+        lastFirebaseAuthError = msg;
+      }
       return auth.currentUser;
     } finally {
       pendingAuthPromise = null;
@@ -71,7 +110,31 @@ export const ensureFirebaseAuth = async (): Promise<FirebaseUser | null> => {
   return pendingAuthPromise;
 };
 
-// Attempt non-blocking auth immediately
+export async function signInWithGoogleSmart(): Promise<{ user: FirebaseUser | null; redirected?: boolean }> {
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+
+  try {
+    const cred = await signInWithPopup(auth, provider);
+    lastFirebaseAuthError = null;
+    return { user: cred.user };
+  } catch (err: any) {
+    const code = err?.code || '';
+    const canFallbackToRedirect =
+      typeof window !== 'undefined' &&
+      window.self === window.top &&
+      (code === 'auth/popup-blocked' ||
+        code === 'auth/operation-not-supported-in-this-environment');
+
+    if (canFallbackToRedirect) {
+      await signInWithRedirect(auth, provider);
+      return { user: null, redirected: true };
+    }
+    throw err;
+  }
+}
+
+// Attempt non-blocking auth check immediately
 ensureFirebaseAuth().catch(() => null);
 
 // Initialize Firestore with specific database ID as required by Firebase skill

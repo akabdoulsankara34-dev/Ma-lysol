@@ -12,12 +12,10 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import {
-  GoogleAuthProvider,
   User as FirebaseUser,
   onAuthStateChanged,
-  signInWithPopup,
 } from 'firebase/auth';
-import { auth, db, ensureFirebaseAuth, sanitizeForFirestore } from '../../lib/firebase';
+import { auth, db, ensureFirebaseAuth, sanitizeForFirestore, signInWithGoogleSmart } from '../../lib/firebase';
 import { DIGISOLIA_CATALOG_APPS } from '../config/dafConfig';
 import {
   DigiSoliaAdminLog,
@@ -112,11 +110,9 @@ export function subscribeDafAuthState(cb: (user: FirebaseUser | null) => void): 
   return onAuthStateChanged(auth, cb);
 }
 
-export async function signInAdminWithGoogle(): Promise<FirebaseUser> {
-  const provider = new GoogleAuthProvider();
-  provider.setCustomParameters({ prompt: 'select_account' });
-  const cred = await signInWithPopup(auth, provider);
-  return cred.user;
+export async function signInAdminWithGoogle(): Promise<FirebaseUser | null> {
+  const res = await signInWithGoogleSmart();
+  return res.user;
 }
 
 export const dafFirebaseService = {

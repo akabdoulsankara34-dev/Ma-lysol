@@ -46,8 +46,10 @@ import {
   sanitizeForFirestore,
   ensureFirebaseAuth,
   getLastFirebaseAuthError,
+  isAnonymousAuthDisabled,
+  signInWithGoogleSmart,
 } from '../lib/firebase';
-import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup } from 'firebase/auth';
+import { onAuthStateChanged } from 'firebase/auth';
 import { 
   collection, 
   doc, 
@@ -88,15 +90,20 @@ export interface FirestoreErrorInfo {
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const user = auth.currentUser;
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: null,
-      email: null,
-      emailVerified: null,
-      isAnonymous: null,
-      tenantId: null,
-      providerInfo: []
+      userId: user?.uid || null,
+      email: user?.email || null,
+      emailVerified: user?.emailVerified ?? null,
+      isAnonymous: user?.isAnonymous ?? null,
+      tenantId: user?.tenantId || null,
+      providerInfo:
+        user?.providerData?.map((p) => ({
+          providerId: p.providerId,
+          email: p.email,
+        })) || [],
     },
     operationType,
     path
@@ -270,10 +277,13 @@ interface AppContextType {
   isSyncing: boolean;
   lastSyncedAt: Date | null;
   cloudSyncError: string | null;
+  hasFirebaseSession: boolean;
   firebaseAuthEmail: string | null;
   isFirebaseAnonymous: boolean;
+  confirmedCloudBizIds: string[];
   connectGoogleAdminSync: () => Promise<{ success: boolean; message: string }>;
   forceSyncCloudData: () => Promise<void>;
+  importBackupData: (rawBackup: any) => Promise<{ importedBusinesses: number; importedUsers: number }>;
   pendingSyncCount: number;
   offlineQueue: QueuedMutation[];
   processOfflineQueue: () => Promise<void>;
@@ -289,8 +299,29 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 const LOCAL_STORAGE_KEY = 'bizpilot_burkina_v2';
 const OFFLINE_QUEUE_KEY = 'bizpilot_burkina_offline_queue_v1';
 const DELETED_BUSINESSES_KEY = 'bizpilot_deleted_businesses_v1';
-const RECONCILED_LOCAL_BIZ_KEY = 'bizpilot_reconciled_local_v1';
+const CONFIRMED_CLOUD_BIZ_KEY = 'bizpilot_confirmed_cloud_biz_v1';
 const PLATFORM_ADMIN_PIN = '761278';
+
+function readStoredIdList(key: string): string[] {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredIdList(key: string, ids: Iterable<string>): string[] {
+  const unique = Array.from(new Set(ids));
+  try {
+    localStorage.setItem(key, JSON.stringify(unique));
+  } catch {
+    // ignore storage quota
+  }
+  return unique;
+}
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Load saved state or fallback
@@ -394,14 +425,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isFirebaseAnonymous, setIsFirebaseAnonymous] = useState<boolean>(
     !auth.currentUser || auth.currentUser.isAnonymous
   );
+  const [confirmedCloudBizIds, setConfirmedCloudBizIds] = useState<string[]>(() =>
+    readStoredIdList(CONFIRMED_CLOUD_BIZ_KEY)
+  );
+
+  const markBusinessesConfirmedInCloud = useCallback((ids: Iterable<string>) => {
+    setConfirmedCloudBizIds((prev) => {
+      const merged = new Set([...prev, ...ids]);
+      return writeStoredIdList(CONFIRMED_CLOUD_BIZ_KEY, merged);
+    });
+  }, []);
+
+  const unmarkBusinessConfirmedInCloud = useCallback((id: string) => {
+    setConfirmedCloudBizIds((prev) => {
+      const next = prev.filter((item) => item !== id);
+      return writeStoredIdList(CONFIRMED_CLOUD_BIZ_KEY, next);
+    });
+  }, []);
 
   // Refs to read fresh multi-tenant lists inside sync hooks without re-subscribing
   const allBusinessesRef = useRef<Business[]>(allBusinesses);
   allBusinessesRef.current = allBusinesses;
   const allUsersRef = useRef<AppUser[]>(allUsers);
   allUsersRef.current = allUsers;
+  const productsRef = useRef<Product[]>(products);
+  productsRef.current = products;
+  const salesRef = useRef<Sale[]>(sales);
+  salesRef.current = sales;
+  const customersRef = useRef<Customer[]>(customers);
+  customersRef.current = customers;
+  const customerPaymentsRef = useRef<CustomerPayment[]>(customerPayments);
+  customerPaymentsRef.current = customerPayments;
+  const expensesRef = useRef<Expense[]>(expenses);
+  expensesRef.current = expenses;
+  const stockMovementsRef = useRef<StockMovement[]>(stockMovements);
+  stockMovementsRef.current = stockMovements;
+  const cashSessionsRef = useRef<CashSession[]>(cashSessions);
+  cashSessionsRef.current = cashSessions;
+  const quotationsRef = useRef<Quotation[]>(quotations);
+  quotationsRef.current = quotations;
+  const invoicesRef = useRef<Invoice[]>(invoices);
+  invoicesRef.current = invoices;
+  const avoirsRef = useRef<Avoir[]>(avoirs);
+  avoirsRef.current = avoirs;
   const offlineQueueRef = useRef<QueuedMutation[]>(offlineQueue);
   offlineQueueRef.current = offlineQueue;
+  const confirmedCloudBizIdsRef = useRef<string[]>(confirmedCloudBizIds);
+  confirmedCloudBizIdsRef.current = confirmedCloudBizIds;
+  const isProcessingQueueRef = useRef<boolean>(false);
 
   useEffect(() => {
     return onAuthStateChanged(auth, (fbUser) => {
@@ -416,13 +487,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const connectGoogleAdminSync = useCallback(async (): Promise<{ success: boolean; message: string }> => {
     try {
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
-      const cred = await signInWithPopup(auth, provider);
+      const res = await signInWithGoogleSmart();
+      if (res.redirected) {
+        return {
+          success: true,
+          message: 'Redirection vers Google en cours pour activer la synchronisation Cloud...',
+        };
+      }
       setCloudSyncError(null);
       return {
         success: true,
-        message: `Connecté avec ${cred.user.email || 'Google'}. Synchronisation multi-appareils active.`,
+        message: `Connecté avec ${res.user?.email || 'Google'}. Synchronisation multi-appareils active.`,
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -449,19 +524,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       b.id.toUpperCase() === code
     );
 
+    let authMissingForLookup = false;
     // If not found in local memory state, query Firestore directly
     if (!found) {
       try {
-        await ensureFirebaseAuth();
-        const snap = await getDocs(collection(db, 'businesses'));
-        if (!snap.empty) {
-          const list: Business[] = [];
-          snap.forEach(d => list.push({ id: d.id, ...d.data() } as Business));
-          setAllBusinesses(list);
-          found = list.find(b => 
-            (b.accessCode && b.accessCode.toUpperCase() === code) ||
-            b.id.toUpperCase() === code
+        const fbUser = await ensureFirebaseAuth();
+        if (!fbUser && !auth.currentUser) {
+          authMissingForLookup = true;
+        } else {
+          const snap = await getDocsFromServer(collection(db, 'businesses')).catch(() =>
+            getDocs(collection(db, 'businesses'))
           );
+          if (!snap.empty) {
+            const list: Business[] = [];
+            snap.forEach(d => list.push({ id: d.id, ...d.data() } as Business));
+            setAllBusinesses(list);
+            markBusinessesConfirmedInCloud(list.map(b => b.id));
+            found = list.find(b => 
+              (b.accessCode && b.accessCode.toUpperCase() === code) ||
+              b.id.toUpperCase() === code
+            );
+          }
         }
       } catch (err) {
         console.warn('Direct Firestore business lookup notice:', err);
@@ -469,6 +552,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     if (!found) {
+      if (authMissingForLookup && navigator.onLine) {
+        return {
+          success: false,
+          message: `Code "${code}" non trouvé localement. Cet appareil n'est pas encore connecté au Cloud : cliquez sur « Connexion Cloud Google » ou synchronisez depuis la console administrateur.`
+        };
+      }
       return { 
         success: false, 
         message: `Code d'accès "${code}" non trouvé. Veuillez vérifier auprès de l'administrateur.` 
@@ -679,15 +768,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       throw new Error('La boutique démo Maëlys ne peut pas être supprimée.');
     }
 
-    try {
-      const existingDeleted: string[] = JSON.parse(localStorage.getItem(DELETED_BUSINESSES_KEY) || '[]');
-      if (!existingDeleted.includes(id)) {
-        localStorage.setItem(DELETED_BUSINESSES_KEY, JSON.stringify([...existingDeleted, id]));
-      }
-    } catch {
-      // ignore storage quota
+    const existingDeleted = readStoredIdList(DELETED_BUSINESSES_KEY);
+    if (!existingDeleted.includes(id)) {
+      writeStoredIdList(DELETED_BUSINESSES_KEY, [...existingDeleted, id]);
     }
+    unmarkBusinessConfirmedInCloud(id);
 
+    setOfflineQueue((prev) =>
+      prev.filter((m) => !(m.collection === 'businesses' && m.docId === id && m.action !== 'delete'))
+    );
     setAllBusinesses(prev => prev.filter(b => b.id !== id));
     setAllUsers(prev => prev.filter(u => u.businessId !== id));
 
@@ -894,10 +983,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     payload?: any,
     description?: string
   ) => {
-    if (navigator.onLine) {
+    if (navigator.onLine && auth.currentUser) {
       try {
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Network timeout (2.5s)')), 2500)
+          setTimeout(() => reject(new Error('Network timeout (10s)')), 10000)
         );
 
         let firestoreTask: Promise<void>;
@@ -910,13 +999,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
 
         await Promise.race([firestoreTask, timeoutPromise]);
+        if (collectionName === 'businesses' && action === 'set') {
+          markBusinessesConfirmedInCloud([docId]);
+        }
         return;
       } catch (err) {
         console.warn(`[Sync] Direct cloud write fallback for ${collectionName}/${docId}:`, err);
       }
     }
 
-    // If offline or if direct write timed out/threw, save to offline outbox queue
+    // If offline, unauthenticated, or direct write timed out/threw, save to offline outbox queue
     const mutationItem: QueuedMutation = {
       id: `queue_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
       collection: collectionName,
@@ -933,52 +1025,68 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const nextQueue = [...filtered, mutationItem];
       return nextQueue;
     });
-  }, []);
+  }, [markBusinessesConfirmedInCloud]);
 
   // Process pending offline mutations
   const processOfflineQueue = useCallback(async () => {
-    if (!navigator.onLine) return;
-    const currentQueue = [...offlineQueue];
+    if (!navigator.onLine || isProcessingQueueRef.current) return;
+    const currentQueue = [...offlineQueueRef.current];
     if (currentQueue.length === 0) return;
 
+    const fbUser = await ensureFirebaseAuth();
+    if (!fbUser && !auth.currentUser) return;
+
+    isProcessingQueueRef.current = true;
     setIsSyncing(true);
     const remaining: QueuedMutation[] = [];
+    const newlyConfirmedBizIds: string[] = [];
     let successfulCount = 0;
 
-    for (const item of currentQueue) {
-      try {
-        if (item.action === 'set') {
-          await setDoc(doc(db, item.collection, item.docId), sanitizeForFirestore(item.payload));
-        } else if (item.action === 'update') {
-          await updateDoc(doc(db, item.collection, item.docId), sanitizeForFirestore(item.payload));
-        } else if (item.action === 'delete') {
-          await deleteDoc(doc(db, item.collection, item.docId));
+    try {
+      for (const item of currentQueue) {
+        try {
+          if (item.action === 'set') {
+            await setDoc(doc(db, item.collection, item.docId), sanitizeForFirestore(item.payload));
+            if (item.collection === 'businesses') {
+              newlyConfirmedBizIds.push(item.docId);
+            }
+          } else if (item.action === 'update') {
+            await updateDoc(doc(db, item.collection, item.docId), sanitizeForFirestore(item.payload));
+          } else if (item.action === 'delete') {
+            await deleteDoc(doc(db, item.collection, item.docId));
+          }
+          successfulCount++;
+        } catch (e) {
+          console.warn(`[Sync Engine] Could not process queued mutation ${item.id}:`, e);
+          remaining.push({ ...item, retryCount: (item.retryCount || 0) + 1 });
         }
-        successfulCount++;
-      } catch (e) {
-        console.warn(`[Sync Engine] Could not process queued mutation ${item.id}:`, e);
-        remaining.push({ ...item, retryCount: (item.retryCount || 0) + 1 });
       }
-    }
 
-    setOfflineQueue(remaining);
-    setIsSyncing(false);
-    setLastSyncedAt(new Date());
+      if (newlyConfirmedBizIds.length > 0) {
+        markBusinessesConfirmedInCloud(newlyConfirmedBizIds);
+      }
 
-    if (successfulCount > 0) {
-      setNotifications(prev => [
-        {
-          id: `notif_sync_${Date.now()}`,
-          title: 'Synchronisation Cloud Réussie',
-          message: `${successfulCount} opération(s) enregistrée(s) hors-ligne ont été synchronisées avec le Cloud.`,
-          type: 'success',
-          timestamp: new Date().toISOString(),
-          read: false
-        },
-        ...prev
-      ]);
+      setOfflineQueue(remaining);
+      setLastSyncedAt(new Date());
+
+      if (successfulCount > 0) {
+        setNotifications(prev => [
+          {
+            id: `notif_sync_${Date.now()}`,
+            title: 'Synchronisation Cloud Réussie',
+            message: `${successfulCount} opération(s) enregistrée(s) hors-ligne ont été synchronisées avec le Cloud.`,
+            type: 'success',
+            timestamp: new Date().toISOString(),
+            read: false
+          },
+          ...prev
+        ]);
+      }
+    } finally {
+      isProcessingQueueRef.current = false;
+      setIsSyncing(false);
     }
-  }, [offlineQueue]);
+  }, [markBusinessesConfirmedInCloud]);
 
   // Online / Offline monitor with active ping probe
   useEffect(() => {
@@ -1024,35 +1132,75 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [processOfflineQueue, offlineQueue.length]);
 
-  // Reconcile any pre-existing local-only businesses & their owner accounts to Firestore
+  // Reconcile any local-only unconfirmed businesses & their scoped records to Firestore
   const reconcileLocalBusinessesToCloud = useCallback(async (remoteBizIds: Set<string>) => {
+    if (!auth.currentUser) return;
     try {
-      const alreadyReconciled = localStorage.getItem(RECONCILED_LOCAL_BIZ_KEY) === '1';
-      if (alreadyReconciled) return;
+      const deletedIds = new Set(readStoredIdList(DELETED_BUSINESSES_KEY));
+      const confirmedIds = new Set(confirmedCloudBizIdsRef.current);
 
-      const deletedIds: string[] = JSON.parse(localStorage.getItem(DELETED_BUSINESSES_KEY) || '[]');
       const missingLocalBusinesses = allBusinessesRef.current.filter(
-        b => !remoteBizIds.has(b.id) && !deletedIds.includes(b.id)
+        (b) => !remoteBizIds.has(b.id) && !deletedIds.has(b.id) && !confirmedIds.has(b.id)
       );
 
       if (missingLocalBusinesses.length > 0) {
-        const batch = writeBatch(db);
-        const missingIds = new Set(missingLocalBusinesses.map(b => b.id));
-        missingLocalBusinesses.forEach(b => {
-          batch.set(doc(db, 'businesses', b.id), sanitizeForFirestore(b));
-        });
+        const missingIds = new Set(missingLocalBusinesses.map((b) => b.id));
+        const ops: { col: string; id: string; data: any }[] = [];
+
+        missingLocalBusinesses.forEach((b) => ops.push({ col: 'businesses', id: b.id, data: b }));
         allUsersRef.current
-          .filter(u => missingIds.has(u.businessId))
-          .forEach(u => {
-            batch.set(doc(db, 'users', u.id), sanitizeForFirestore(u));
+          .filter((u) => missingIds.has(u.businessId))
+          .forEach((u) => ops.push({ col: 'users', id: u.id, data: u }));
+        productsRef.current
+          .filter((p) => missingIds.has(p.businessId))
+          .forEach((p) => ops.push({ col: 'products', id: p.id, data: p }));
+        customersRef.current
+          .filter((c) => missingIds.has(c.businessId))
+          .forEach((c) => ops.push({ col: 'customers', id: c.id, data: c }));
+        customerPaymentsRef.current
+          .filter((cp) => missingIds.has(cp.businessId))
+          .forEach((cp) => ops.push({ col: 'customer_payments', id: cp.id, data: cp }));
+        expensesRef.current
+          .filter((e) => missingIds.has(e.businessId))
+          .forEach((e) => ops.push({ col: 'expenses', id: e.id, data: e }));
+        salesRef.current
+          .filter((s) => missingIds.has(s.businessId))
+          .forEach((s) => ops.push({ col: 'sales', id: s.id, data: s }));
+        stockMovementsRef.current
+          .filter((sm) => missingIds.has(sm.businessId))
+          .forEach((sm) => ops.push({ col: 'stock_movements', id: sm.id, data: sm }));
+        cashSessionsRef.current
+          .filter((cs) => missingIds.has(cs.businessId))
+          .forEach((cs) => ops.push({ col: 'cash_sessions', id: cs.id, data: cs }));
+        quotationsRef.current
+          .filter((q) => missingIds.has(q.businessId))
+          .forEach((q) => ops.push({ col: 'quotations', id: q.id, data: q }));
+        invoicesRef.current
+          .filter((inv) => missingIds.has(inv.businessId))
+          .forEach((inv) => ops.push({ col: 'invoices', id: inv.id, data: inv }));
+        avoirsRef.current
+          .filter((av) => missingIds.has(av.businessId || av.commerceId || ''))
+          .forEach((av) => ops.push({ col: 'avoirs', id: av.id, data: av }));
+
+        // Commit in chunks of 400 to respect Firestore's 500-write batch limit
+        for (let i = 0; i < ops.length; i += 400) {
+          const batch = writeBatch(db);
+          const chunk = ops.slice(i, i + 400);
+          chunk.forEach((op) => {
+            batch.set(doc(db, op.col, op.id), sanitizeForFirestore(op.data));
           });
-        await batch.commit();
+          await batch.commit();
+        }
       }
-      localStorage.setItem(RECONCILED_LOCAL_BIZ_KEY, '1');
+
+      markBusinessesConfirmedInCloud([
+        ...Array.from(remoteBizIds),
+        ...missingLocalBusinesses.map((b) => b.id),
+      ]);
     } catch (err) {
       console.warn('Local-to-cloud business reconciliation notice:', err);
     }
-  }, []);
+  }, [markBusinessesConfirmedInCloud]);
 
   // Multi-Device Real-Time Cloud Synchronization Engine with Firestore
   useEffect(() => {
@@ -1082,8 +1230,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (!fbUser && !auth.currentUser) {
           const authErr = getLastFirebaseAuthError();
           setCloudSyncError(
-            authErr
-              ? `Authentification Firebase requise pour synchroniser entre appareils (${authErr}). Utilisez « Connexion Google Admin ».`
+            isAnonymousAuthDisabled()
+              ? 'Authentification Cloud requise pour synchroniser vos entreprises entre téléphones : connectez votre compte Google Administrateur.'
+              : authErr
+              ? `Authentification Cloud requise pour synchroniser entre appareils (${authErr}).`
               : 'Authentification Firebase en attente pour la synchronisation Cloud.'
           );
           setIsSyncing(false);
@@ -1098,6 +1248,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           // Non-blocking connection test
         }
 
+        // Flush any queued local mutations immediately now that Firebase auth is active
+        await processOfflineQueue();
+        if (isDisposed) return;
+
         // Initial Cloud Seeding & Pre-existing Local Reconciliation Check
         try {
           const bizSnapshot = await getDocsFromServer(collection(db, 'businesses')).catch(() =>
@@ -1105,50 +1259,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           );
           if (bizSnapshot.empty) {
             console.log('Seeding initial master data to Cloud Firestore for multi-device collaboration...');
-            const batch = writeBatch(db);
+            const ops: { col: string; id: string; data: any }[] = [];
 
-            // Seed initialBusinesses plus any locally created businesses already on this device
             const seenBizIds = new Set<string>();
+            const deletedIds = new Set(readStoredIdList(DELETED_BUSINESSES_KEY));
             [...initialBusinesses, ...allBusinessesRef.current].forEach(b => {
-              if (!seenBizIds.has(b.id)) {
+              if (!seenBizIds.has(b.id) && !deletedIds.has(b.id)) {
                 seenBizIds.add(b.id);
-                batch.set(doc(db, 'businesses', b.id), sanitizeForFirestore(b));
+                ops.push({ col: 'businesses', id: b.id, data: b });
               }
             });
             const seenUserIds = new Set<string>();
             [...initialUsers, ...allUsersRef.current].forEach(u => {
               if (!seenUserIds.has(u.id)) {
                 seenUserIds.add(u.id);
-                batch.set(doc(db, 'users', u.id), sanitizeForFirestore(u));
+                ops.push({ col: 'users', id: u.id, data: u });
               }
             });
-            initialProducts.forEach(p => {
-              batch.set(doc(db, 'products', p.id), sanitizeForFirestore(p));
-            });
-            initialCustomers.forEach(c => {
-              batch.set(doc(db, 'customers', c.id), sanitizeForFirestore(c));
-            });
-            initialExpenses.forEach(e => {
-              batch.set(doc(db, 'expenses', e.id), sanitizeForFirestore(e));
-            });
-            initialSales.forEach(s => {
-              batch.set(doc(db, 'sales', s.id), sanitizeForFirestore(s));
-            });
-            initialStockMovements.forEach(sm => {
-              batch.set(doc(db, 'stock_movements', sm.id), sanitizeForFirestore(sm));
-            });
-            initialCashSessions.forEach(cs => {
-              batch.set(doc(db, 'cash_sessions', cs.id), sanitizeForFirestore(cs));
-            });
-            initialQuotations.forEach(q => {
-              batch.set(doc(db, 'quotations', q.id), sanitizeForFirestore(q));
-            });
-            initialAvoirs.forEach(a => {
-              batch.set(doc(db, 'avoirs', a.id), sanitizeForFirestore(a));
-            });
+            initialProducts.forEach(p => ops.push({ col: 'products', id: p.id, data: p }));
+            initialCustomers.forEach(c => ops.push({ col: 'customers', id: c.id, data: c }));
+            initialExpenses.forEach(e => ops.push({ col: 'expenses', id: e.id, data: e }));
+            initialSales.forEach(s => ops.push({ col: 'sales', id: s.id, data: s }));
+            initialStockMovements.forEach(sm => ops.push({ col: 'stock_movements', id: sm.id, data: sm }));
+            initialCashSessions.forEach(cs => ops.push({ col: 'cash_sessions', id: cs.id, data: cs }));
+            initialQuotations.forEach(q => ops.push({ col: 'quotations', id: q.id, data: q }));
+            initialAvoirs.forEach(a => ops.push({ col: 'avoirs', id: a.id, data: a }));
 
-            await batch.commit();
-            localStorage.setItem(RECONCILED_LOCAL_BIZ_KEY, '1');
+            for (let i = 0; i < ops.length; i += 400) {
+              const batch = writeBatch(db);
+              ops.slice(i, i + 400).forEach((op) => {
+                batch.set(doc(db, op.col, op.id), sanitizeForFirestore(op.data));
+              });
+              await batch.commit();
+            }
+            markBusinessesConfirmedInCloud(seenBizIds);
           } else {
             const remoteIds = new Set<string>();
             bizSnapshot.forEach(d => remoteIds.add(d.id));
@@ -1171,18 +1315,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (!snapshot.empty) {
             const list: Business[] = [];
             const remoteIds = new Set<string>();
+            const deletedIds = new Set(readStoredIdList(DELETED_BUSINESSES_KEY));
+            const confirmedIds = new Set(confirmedCloudBizIdsRef.current);
+
             snapshot.forEach(docSnap => {
               remoteIds.add(docSnap.id);
-              list.push({ id: docSnap.id, ...docSnap.data() } as Business);
+              if (!deletedIds.has(docSnap.id)) {
+                list.push({ id: docSnap.id, ...docSnap.data() } as Business);
+              }
             });
-            // Keep any businesses currently sitting in offline outbox queue until uploaded
+
+            markBusinessesConfirmedInCloud(Array.from(remoteIds).filter((id) => !deletedIds.has(id)));
+
+            // Keep any businesses currently in offline outbox queue OR never yet confirmed on Firestore
             const pendingBizCreates = offlineQueueRef.current
-              .filter(m => m.collection === 'businesses' && m.action === 'set' && m.payload && !remoteIds.has(m.docId))
+              .filter(m => m.collection === 'businesses' && m.action === 'set' && m.payload && !remoteIds.has(m.docId) && !deletedIds.has(m.docId))
               .map(m => m.payload as Business);
-            const mergedList = [...list, ...pendingBizCreates];
+            const seenPendingIds = new Set(pendingBizCreates.map(b => b.id));
+            const unconfirmedLocalBiz = allBusinessesRef.current.filter(
+              (b) => !remoteIds.has(b.id) && !deletedIds.has(b.id) && !confirmedIds.has(b.id) && !seenPendingIds.has(b.id)
+            );
+
+            if (unconfirmedLocalBiz.length > 0) {
+              reconcileLocalBusinessesToCloud(remoteIds).catch(() => null);
+            }
+
+            const mergedList = [...list, ...pendingBizCreates, ...unconfirmedLocalBiz];
             if (mergedList.length > 0) {
               setAllBusinesses(mergedList);
-              setBusiness(prev => mergedList.find(b => b.id === prev.id) || prev);
+              setBusiness(prev => mergedList.find(b => b.id === prev.id) || mergedList[0] || prev);
             }
           }
         }, (err) => {
@@ -1348,7 +1509,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubscribeInvoices?.();
       unsubscribeAvoirs?.();
     };
-  }, [isOnline, firebaseAuthUid, reconcileLocalBusinessesToCloud]);
+  }, [isOnline, firebaseAuthUid, processOfflineQueue, reconcileLocalBusinessesToCloud, markBusinessesConfirmedInCloud]);
 
   // Manual / On-demand force sync helper (pushes local outbox & missing businesses, pulls fresh server snapshot)
   const forceSyncCloudData = useCallback(async () => {
@@ -1362,7 +1523,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!fbUser && !auth.currentUser) {
         const authErr = getLastFirebaseAuthError();
         setCloudSyncError(
-          `Authentification Cloud requise${authErr ? ` (${authErr})` : ''}. Cliquez sur « Connexion Google Admin ».`
+          isAnonymousAuthDisabled()
+            ? 'Authentification Cloud requise pour synchroniser : cliquez sur « Connexion Google Admin ».'
+            : `Authentification Cloud requise${authErr ? ` (${authErr})` : ''}. Cliquez sur « Connexion Google Admin ».`
         );
         return;
       }
@@ -1408,9 +1571,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (!bizSnap.empty) {
         const bList: Business[] = [];
-        bizSnap.forEach(d => bList.push({ id: d.id, ...d.data() } as Business));
-        setAllBusinesses(bList);
-        setBusiness(prev => bList.find(b => b.id === prev.id) || prev);
+        const remoteIds = new Set<string>();
+        const deletedIds = new Set(readStoredIdList(DELETED_BUSINESSES_KEY));
+        const confirmedIds = new Set(confirmedCloudBizIdsRef.current);
+
+        bizSnap.forEach(d => {
+          remoteIds.add(d.id);
+          if (!deletedIds.has(d.id)) {
+            bList.push({ id: d.id, ...d.data() } as Business);
+          }
+        });
+        markBusinessesConfirmedInCloud(Array.from(remoteIds).filter((id) => !deletedIds.has(id)));
+
+        const pendingBizCreates = offlineQueueRef.current
+          .filter(m => m.collection === 'businesses' && m.action === 'set' && m.payload && !remoteIds.has(m.docId) && !deletedIds.has(m.docId))
+          .map(m => m.payload as Business);
+        const seenPending = new Set(pendingBizCreates.map(b => b.id));
+        const unconfirmedLocal = allBusinessesRef.current.filter(
+          (b) => !remoteIds.has(b.id) && !deletedIds.has(b.id) && !confirmedIds.has(b.id) && !seenPending.has(b.id)
+        );
+        const mergedBiz = [...bList, ...pendingBizCreates, ...unconfirmedLocal];
+        if (mergedBiz.length > 0) {
+          setAllBusinesses(mergedBiz);
+          setBusiness(prev => mergedBiz.find(b => b.id === prev.id) || mergedBiz[0] || prev);
+        }
       }
 
       if (!prodSnap.empty) {
@@ -1489,7 +1673,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } finally {
       setIsSyncing(false);
     }
-  }, [processOfflineQueue, reconcileLocalBusinessesToCloud]);
+  }, [processOfflineQueue, reconcileLocalBusinessesToCloud, markBusinessesConfirmedInCloud]);
+
+  // Import & merge JSON backup across devices
+  const importBackupData = useCallback(async (rawBackup: any): Promise<{ importedBusinesses: number; importedUsers: number }> => {
+    const incomingBusinesses: Business[] = Array.isArray(rawBackup?.allBusinesses) ? rawBackup.allBusinesses : [];
+    const incomingUsers: AppUser[] = Array.isArray(rawBackup?.allUsers) ? rawBackup.allUsers : [];
+
+    if (incomingBusinesses.length === 0) {
+      throw new Error('Le fichier ne contient aucune entreprise valide.');
+    }
+
+    const existingIds = new Set(allBusinessesRef.current.map(b => b.id));
+    const newBusinesses = incomingBusinesses.filter(b => b && b.id && !existingIds.has(b.id));
+    if (newBusinesses.length > 0) {
+      setAllBusinesses(prev => [...prev, ...newBusinesses]);
+    }
+
+    const existingUserIds = new Set(allUsersRef.current.map(u => u.id));
+    const newUsers = incomingUsers.filter(u => u && u.id && !existingUserIds.has(u.id));
+    if (newUsers.length > 0) {
+      setAllUsers(prev => [...prev, ...newUsers]);
+    }
+
+    const mergeById = <T extends { id: string }>(current: T[], incoming?: T[]): T[] => {
+      if (!Array.isArray(incoming) || incoming.length === 0) return current;
+      const seen = new Set(current.map(x => x.id));
+      const additions = incoming.filter(x => x && x.id && !seen.has(x.id));
+      return additions.length > 0 ? [...current, ...additions] : current;
+    };
+
+    setProducts(prev => mergeById(prev, rawBackup?.products));
+    setSales(prev => mergeById(prev, rawBackup?.sales));
+    setCustomers(prev => mergeById(prev, rawBackup?.customers));
+    setExpenses(prev => mergeById(prev, rawBackup?.expenses));
+    setStockMovements(prev => mergeById(prev, rawBackup?.stockMovements));
+
+    // Clear deleted flags for re-imported businesses so they stay preserved and can sync to Cloud
+    const deletedList = readStoredIdList(DELETED_BUSINESSES_KEY).filter(
+      (id) => !incomingBusinesses.some((b) => b.id === id)
+    );
+    writeStoredIdList(DELETED_BUSINESSES_KEY, deletedList);
+
+    if (auth.currentUser && navigator.onLine) {
+      await reconcileLocalBusinessesToCloud(new Set()).catch(() => null);
+    }
+
+    return {
+      importedBusinesses: newBusinesses.length,
+      importedUsers: newUsers.length,
+    };
+  }, [reconcileLocalBusinessesToCloud]);
 
   // Current Business scoped entities (Multi-tenancy isolation)
   const scopedProducts = useMemo(() => 
@@ -3159,10 +3393,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isSyncing,
         lastSyncedAt,
         cloudSyncError,
+        hasFirebaseSession: Boolean(firebaseAuthUid),
         firebaseAuthEmail,
         isFirebaseAnonymous,
+        confirmedCloudBizIds,
         connectGoogleAdminSync,
         forceSyncCloudData,
+        importBackupData,
         pendingSyncCount: offlineQueue.length,
         offlineQueue,
         processOfflineQueue,

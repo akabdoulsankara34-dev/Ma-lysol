@@ -68,10 +68,13 @@ export const PlatformAdminView: React.FC = () => {
     isSyncing, 
     lastSyncedAt,
     cloudSyncError,
+    hasFirebaseSession,
     firebaseAuthEmail,
     isFirebaseAnonymous,
+    confirmedCloudBizIds,
     connectGoogleAdminSync,
     forceSyncCloudData,
+    importBackupData,
     pendingSyncCount,
     lockPlatformAdmin,
     resetToDemoData,
@@ -82,6 +85,8 @@ export const PlatformAdminView: React.FC = () => {
   const [syncStatusMsg, setSyncStatusMsg] = useState<string | null>(null);
   const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
+  const confirmedCloudSet = React.useMemo(() => new Set(confirmedCloudBizIds), [confirmedCloudBizIds]);
+  const unconfirmedLocalCount = allBusinesses.filter((b) => !confirmedCloudSet.has(b.id)).length;
 
   // New Business Form Modal State
   const [showCreateBizModal, setShowCreateBizModal] = useState(false);
@@ -227,6 +232,10 @@ export const PlatformAdminView: React.FC = () => {
   };
 
   const handleForceSync = async () => {
+    if (!hasFirebaseSession) {
+      await handleGoogleAdminConnect();
+      return;
+    }
     setSyncStatusMsg('Synchronisation Cloud Firestore en cours...');
     await forceSyncCloudData();
     setSyncStatusMsg('Synchronisation terminée avec Cloud Firestore.');
@@ -270,6 +279,24 @@ export const PlatformAdminView: React.FC = () => {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const handleImportBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const res = await importBackupData(parsed);
+      setSyncStatusMsg(
+        `Import terminé : ${res.importedBusinesses} nouvelle(s) entreprise(s) et ${res.importedUsers} compte(s) ajouté(s).`
+      );
+      setTimeout(() => setSyncStatusMsg(null), 5000);
+    } catch (err) {
+      setSyncStatusMsg(err instanceof Error ? err.message : 'Fichier de sauvegarde JSON invalide.');
+      setTimeout(() => setSyncStatusMsg(null), 5000);
+    }
   };
 
   return (
@@ -433,41 +460,55 @@ export const PlatformAdminView: React.FC = () => {
       {activeAdminTab === 'businesses' && (
         <div className="space-y-6">
           {/* Cloud Sync Diagnostics & Multi-Device Consistency Bar */}
-          <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 ${
-            cloudSyncError
-              ? 'bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900/60 text-red-900 dark:text-red-200'
+          <div className={`p-4 sm:p-5 rounded-2xl border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 ${
+            !hasFirebaseSession || cloudSyncError
+              ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-100'
               : 'bg-sky-50/70 dark:bg-sky-950/30 border-sky-200 dark:border-sky-900/60 text-slate-800 dark:text-slate-200'
           }`}>
             <div className="flex items-start gap-3">
-              {cloudSyncError ? (
-                <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+              {!hasFirebaseSession || cloudSyncError ? (
+                <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
               ) : (
                 <Cloud className="h-5 w-5 text-blue-600 dark:text-sky-400 shrink-0 mt-0.5" />
               )}
               <div className="text-xs">
                 <p className="font-bold">
-                  {cloudSyncError
+                  {!hasFirebaseSession
+                    ? allBusinesses.length > 1
+                      ? `${allBusinesses.length} entreprises enregistrées localement — en attente d'envoi vers le Cloud`
+                      : `Synchronisation Cloud non connectée sur cet appareil (${allBusinesses.length} entreprise locale)`
+                    : cloudSyncError
                     ? 'Alerte synchronisation Cloud Firestore'
-                    : `Synchronisation Multi-Appareils (${allBusinesses.length} entreprise(s) chargée(s))`}
+                    : `Synchronisation Multi-Appareils Active (${allBusinesses.length} entreprise(s))`}
                 </p>
-                <p className="text-[11px] opacity-85 mt-0.5">
-                  {cloudSyncError
+                <p className="text-[11px] opacity-90 mt-0.5 leading-relaxed">
+                  {!hasFirebaseSession
+                    ? allBusinesses.length > 1
+                      ? 'Connectez votre compte Google Administrateur sur ce téléphone pour envoyer vos entreprises locales vers Cloud Firestore et les rendre visibles sur vos autres appareils.'
+                      : 'Connectez votre compte Google Administrateur pour charger les entreprises enregistrées depuis vos autres appareils.'
+                    : cloudSyncError
                     ? cloudSyncError
                     : firebaseAuthEmail
-                    ? `Session Cloud vérifiée (${firebaseAuthEmail})${pendingSyncCount > 0 ? ` · ${pendingSyncCount} modification(s) en attente` : ''}`
-                    : `Session Cloud ${isFirebaseAnonymous ? 'anonyme active' : 'connectée'}${pendingSyncCount > 0 ? ` · ${pendingSyncCount} modification(s) en attente` : ' · Temps réel actif sur tous vos appareils'}`}
+                    ? `Session Cloud vérifiée (${firebaseAuthEmail})${unconfirmedLocalCount > 0 ? ` · ${unconfirmedLocalCount} locale(s) en cours d'envoi` : ''}${pendingSyncCount > 0 ? ` · ${pendingSyncCount} modification(s) en attente` : ' · Synchronisé sur tous vos appareils'}`
+                    : `Session Cloud connectée${pendingSyncCount > 0 ? ` · ${pendingSyncCount} modification(s) en attente` : ' · Temps réel actif sur tous vos appareils'}`}
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0 flex-wrap">
-              {(isFirebaseAnonymous || cloudSyncError) && (
+              {(!hasFirebaseSession || isFirebaseAnonymous || cloudSyncError) && (
                 <button
                   type="button"
                   onClick={handleGoogleAdminConnect}
                   disabled={isConnectingGoogle}
-                  className="px-3 py-2 rounded-xl bg-[#163B65] hover:bg-[#1E4C80] disabled:opacity-60 text-white text-xs font-bold transition cursor-pointer"
+                  className="px-3.5 py-2.5 rounded-xl bg-[#163B65] hover:bg-[#1E4C80] disabled:opacity-60 text-white text-xs font-bold transition cursor-pointer shadow-xs"
                 >
-                  {isConnectingGoogle ? 'Connexion...' : 'Connexion Google Admin'}
+                  {isConnectingGoogle
+                    ? 'Connexion...'
+                    : !hasFirebaseSession
+                    ? allBusinesses.length > 1
+                      ? `Connecter Google & Envoyer (${allBusinesses.length})`
+                      : 'Connecter Google & Charger Cloud'
+                    : 'Connexion Google Admin'}
                 </button>
               )}
               <button
@@ -508,6 +549,7 @@ export const PlatformAdminView: React.FC = () => {
             {allBusinesses.map((biz) => {
               const isCurrent = biz.id === business.id;
               const isSuspended = biz.status === 'suspended';
+              const isCloudConfirmed = confirmedCloudSet.has(biz.id);
 
               return (
                 <div
@@ -535,13 +577,22 @@ export const PlatformAdminView: React.FC = () => {
                         <p className="text-xs text-slate-500 mt-0.5">{biz.sector}</p>
                       </div>
 
-                      <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
-                        isSuspended 
-                          ? 'bg-red-100 text-red-800 border-red-200' 
-                          : 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                      }`}>
-                        {isSuspended ? 'Suspendue' : 'Active'}
-                      </span>
+                      <div className="flex flex-col items-end gap-1 shrink-0">
+                        <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
+                          isSuspended 
+                            ? 'bg-red-100 text-red-800 border-red-200' 
+                            : 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                        }`}>
+                          {isSuspended ? 'Suspendue' : 'Active'}
+                        </span>
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                          isCloudConfirmed
+                            ? 'bg-sky-50 text-sky-700 border-sky-200'
+                            : 'bg-amber-50 text-amber-800 border-amber-200'
+                        }`}>
+                          {isCloudConfirmed ? 'Cloud OK' : 'Locale uniquement'}
+                        </span>
+                      </div>
                     </div>
 
                     {/* Access Code Highlight Box */}
@@ -1072,17 +1123,29 @@ export const PlatformAdminView: React.FC = () => {
                 <Download className="h-5 w-5" />
               </div>
               <div>
-                <h3 className="font-bold text-slate-900 text-sm">Sauvegarde Complète JSON</h3>
-                <p className="text-xs text-slate-500">Exportez l'intégralité des données de toutes les entreprises</p>
+                <h3 className="font-bold text-slate-900 text-sm">Sauvegarde & Transfert JSON</h3>
+                <p className="text-xs text-slate-500">Exportez ou importez les entreprises entre deux appareils</p>
               </div>
             </div>
-            <button
-              onClick={handleExportBackup}
-              className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <Download className="h-4 w-4" />
-              <span>Télécharger le Fichier JSON</span>
-            </button>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <button
+                onClick={handleExportBackup}
+                className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Download className="h-4 w-4" />
+                <span>Exporter JSON</span>
+              </button>
+              <label className="w-full py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 font-bold text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer">
+                <Upload className="h-4 w-4" />
+                <span>Importer JSON</span>
+                <input
+                  type="file"
+                  accept="application/json,.json"
+                  onChange={handleImportBackup}
+                  className="hidden"
+                />
+              </label>
+            </div>
           </div>
 
           <div className="bg-white p-6 rounded-2xl border border-red-200 shadow-2xs space-y-4">
@@ -1099,7 +1162,8 @@ export const PlatformAdminView: React.FC = () => {
               onClick={async () => {
                 if (window.confirm('Voulez-vous restaurer les données de démonstration pour le Burkina Faso ?')) {
                   await resetToDemoData();
-                  alert('Données de démo restaurées.');
+                  setSyncStatusMsg('Données de démonstration restaurées.');
+                  setTimeout(() => setSyncStatusMsg(null), 4000);
                 }
               }}
               className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer"

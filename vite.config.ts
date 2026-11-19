@@ -13,6 +13,8 @@ const pwaManifest = {
   theme_color: '#163B65',
   background_color: '#0f172a',
   display: 'standalone' as const,
+  display_override: ['standalone', 'minimal-ui'] as ('standalone' | 'minimal-ui')[],
+  prefer_related_applications: false,
   start_url: '/',
   scope: '/',
   lang: 'fr',
@@ -54,6 +56,7 @@ function devPwaFallbackPlugin(): Plugin {
         if (cleanUrl === '/manifest.webmanifest') {
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache');
           res.end(JSON.stringify(pwaManifest));
           return;
         }
@@ -67,6 +70,7 @@ function devPwaFallbackPlugin(): Plugin {
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
           res.setHeader('Service-Worker-Allowed', '/');
+          res.setHeader('Cache-Control', 'no-cache');
           res.end(`
             self.addEventListener('install', () => self.skipWaiting());
             self.addEventListener('activate', (event) => {
@@ -84,16 +88,41 @@ function devPwaFallbackPlugin(): Plugin {
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
           res.setHeader('Service-Worker-Allowed', '/');
+          res.setHeader('Cache-Control', 'no-cache');
           res.end(`
-            self.addEventListener('install', () => self.skipWaiting());
+            const DEV_SHELL_CACHE = 'bizpilot-dev-shell-v1';
+            self.addEventListener('install', (event) => {
+              event.waitUntil(
+                caches.open(DEV_SHELL_CACHE)
+                  .then((cache) => cache.add('/').catch(() => null))
+                  .then(() => self.skipWaiting())
+              );
+            });
             self.addEventListener('activate', (event) => {
               event.waitUntil(
                 caches.keys()
-                  .then((keys) => Promise.all(keys.filter((k) => k.includes('workbox-precache')).map((k) => caches.delete(k))))
+                  .then((keys) => Promise.all(
+                    keys
+                      .filter((k) => k.includes('workbox-precache') || (k.startsWith('bizpilot-dev-shell-') && k !== DEV_SHELL_CACHE))
+                      .map((k) => caches.delete(k))
+                  ))
                   .then(() => self.clients.claim())
               );
             });
-            self.addEventListener('fetch', () => {});
+            self.addEventListener('fetch', (event) => {
+              if (event.request.mode !== 'navigate') return;
+              event.respondWith(
+                fetch(event.request)
+                  .then((response) => {
+                    if (response && response.ok) {
+                      const copy = response.clone();
+                      caches.open(DEV_SHELL_CACHE).then((cache) => cache.put('/', copy)).catch(() => null);
+                    }
+                    return response;
+                  })
+                  .catch(() => caches.match('/'))
+              );
+            });
           `);
           return;
         }
@@ -110,17 +139,20 @@ export default defineConfig(() => {
       tailwindcss(),
       devPwaFallbackPlugin(),
       VitePWA({
+        base: '/',
+        scope: '/',
+        manifestFilename: 'manifest.webmanifest',
         registerType: 'autoUpdate',
-        includeAssets: [
-          'icon.svg',
-          'apple-touch-icon.png',
-          'pwa-192x192.png',
-          'pwa-512x512.png',
-          'pwa-maskable-512x512.png',
-        ],
+        // Les icônes et assets de public/ sont déjà inclus par workbox.globPatterns ; éviter les doublons de précache
+        includeAssets: [],
         manifest: pwaManifest,
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          globIgnores: ['pwa-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png'],
+          cleanupOutdatedCaches: true,
+          clientsClaim: true,
+          skipWaiting: true,
+          navigateFallback: 'index.html',
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           navigateFallbackDenylist: [
             /^\/api/,
