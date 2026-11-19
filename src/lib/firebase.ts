@@ -120,6 +120,7 @@ export async function signInWithGoogleSmart(): Promise<{ user: FirebaseUser | nu
     return { user: cred.user };
   } catch (err: any) {
     const code = err?.code || '';
+    const host = typeof window !== 'undefined' ? window.location.hostname : '';
     const canFallbackToRedirect =
       typeof window !== 'undefined' &&
       window.self === window.top &&
@@ -130,6 +131,21 @@ export async function signInWithGoogleSmart(): Promise<{ user: FirebaseUser | nu
       await signInWithRedirect(auth, provider);
       return { user: null, redirected: true };
     }
+
+    if (code === 'auth/unauthorized-domain') {
+      const msg = `Domaine non autorisé dans Firebase Auth (${host}). Ajoutez ce domaine dans Firebase Console > Authentication > Settings > Authorized domains.`;
+      lastFirebaseAuthError = msg;
+      throw new Error(msg);
+    }
+
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+      const msg = 'Fenêtre de connexion Google fermée avant la fin. Réessayez ou utilisez le transfert par lien/code entre appareils.';
+      lastFirebaseAuthError = msg;
+      throw new Error(msg);
+    }
+
+    const msg = err instanceof Error ? err.message : String(err);
+    lastFirebaseAuthError = msg;
     throw err;
   }
 }

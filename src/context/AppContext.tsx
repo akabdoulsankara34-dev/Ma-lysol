@@ -284,6 +284,9 @@ interface AppContextType {
   connectGoogleAdminSync: () => Promise<{ success: boolean; message: string }>;
   forceSyncCloudData: () => Promise<void>;
   importBackupData: (rawBackup: any) => Promise<{ importedBusinesses: number; importedUsers: number }>;
+  generateBusinessesTransferCode: () => string;
+  generateBusinessesTransferLink: () => string;
+  importBusinessesTransferToken: (tokenOrUrl: string) => Promise<{ importedBusinesses: number; importedUsers: number }>;
   pendingSyncCount: number;
   offlineQueue: QueuedMutation[];
   processOfflineQueue: () => Promise<void>;
@@ -321,6 +324,40 @@ function writeStoredIdList(key: string, ids: Iterable<string>): string[] {
     // ignore storage quota
   }
   return unique;
+}
+
+function encodeSyncPayload(obj: unknown): string {
+  const json = JSON.stringify(obj);
+  const bytes = new TextEncoder().encode(json);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function decodeSyncPayload(token: string): any {
+  let clean = token.trim();
+  if (clean.includes('bizsync=')) {
+    try {
+      const url = new URL(clean.startsWith('http') ? clean : `https://dummy.local/${clean.replace(/^\/+/, '')}`);
+      const param = url.searchParams.get('bizsync');
+      if (param) clean = param;
+    } catch {
+      const match = clean.match(/[?&]bizsync=([^&#\s]+)/);
+      if (match?.[1]) clean = decodeURIComponent(match[1]);
+    }
+  }
+  clean = clean.replace(/^BP-SYNC-/i, '').trim();
+  const base64 = clean.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = base64 + '==='.slice((base64.length + 3) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  const json = new TextDecoder().decode(bytes);
+  return JSON.parse(json);
 }
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -1724,6 +1761,91 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       importedUsers: newUsers.length,
     };
   }, [reconcileLocalBusinessesToCloud]);
+
+  const generateBusinessesTransferCode = useCallback((): string => {
+    const payload = {
+      v: 1,
+      b: allBusinessesRef.current,
+      u: allUsersRef.current,
+    };
+    return `BP-SYNC-${encodeSyncPayload(payload)}`;
+  }, []);
+
+  const generateBusinessesTransferLink = useCallback((): string => {
+    const payload = {
+      v: 1,
+      b: allBusinessesRef.current,
+      u: allUsersRef.current,
+    };
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    return `${origin}/?bizsync=${encodeSyncPayload(payload)}`;
+  }, []);
+
+  const importBusinessesTransferToken = useCallback(
+    async (tokenOrUrl: string): Promise<{ importedBusinesses: number; importedUsers: number }> => {
+      if (!tokenOrUrl || !tokenOrUrl.trim()) {
+        throw new Error('Veuillez coller un lien ou un code de transfert BP-SYNC valide.');
+      }
+      let decoded: any;
+      try {
+        decoded = decodeSyncPayload(tokenOrUrl);
+      } catch {
+        throw new Error('Code ou lien de transfert invalide ou incomplet.');
+      }
+      const bList: Business[] = Array.isArray(decoded?.b)
+        ? decoded.b
+        : Array.isArray(decoded?.allBusinesses)
+        ? decoded.allBusinesses
+        : [];
+      const uList: AppUser[] = Array.isArray(decoded?.u)
+        ? decoded.u
+        : Array.isArray(decoded?.allUsers)
+        ? decoded.allUsers
+        : [];
+
+      if (bList.length === 0) {
+        throw new Error('Aucune entreprise valide trouvée dans ce code de transfert.');
+      }
+
+      return importBackupData({ allBusinesses: bList, allUsers: uList });
+    },
+    [importBackupData]
+  );
+
+  // Auto-import businesses when opening a ?bizsync=... transfer link
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const syncToken = params.get('bizsync');
+      if (!syncToken) return;
+      const cleanUrl = window.location.pathname + window.location.hash;
+      window.history.replaceState({}, '', cleanUrl || '/');
+
+      importBusinessesTransferToken(syncToken)
+        .then((res) => {
+          setNotifications((prev) => [
+            {
+              id: `notif_bizsync_${Date.now()}`,
+              title: 'Synchronisation directe réussie',
+              message:
+                res.importedBusinesses > 0
+                  ? `${res.importedBusinesses} nouvelle(s) entreprise(s) et ${res.importedUsers} compte(s) ajoutés sur cet appareil.`
+                  : 'Toutes les entreprises de ce lien sont déjà présentes sur cet appareil.',
+              type: 'success',
+              read: false,
+              timestamp: new Date().toISOString(),
+            },
+            ...prev,
+          ]);
+        })
+        .catch((err) => {
+          console.warn('Automatic ?bizsync= import failed:', err);
+        });
+    } catch {
+      // Ignore invalid query string
+    }
+  }, [importBusinessesTransferToken]);
 
   // Current Business scoped entities (Multi-tenancy isolation)
   const scopedProducts = useMemo(() => 
@@ -3400,6 +3522,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         connectGoogleAdminSync,
         forceSyncCloudData,
         importBackupData,
+        generateBusinessesTransferCode,
+        generateBusinessesTransferLink,
+        importBusinessesTransferToken,
         pendingSyncCount: offlineQueue.length,
         offlineQueue,
         processOfflineQueue,

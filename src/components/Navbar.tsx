@@ -37,6 +37,8 @@ export const Navbar: React.FC = () => {
     lockUserSession,
     isOnline, 
     isSyncing, 
+    hasFirebaseSession,
+    connectGoogleAdminSync,
     forceSyncCloudData,
     pendingSyncCount,
     processOfflineQueue,
@@ -425,15 +427,34 @@ export const Navbar: React.FC = () => {
           )}
         </div>
       )}
-      {isOnline && pendingSyncCount > 0 && (
+      {isOnline && pendingSyncCount > 0 && hasFirebaseSession && (
         <div className="bg-blue-600 text-white px-4 py-1 text-xs text-center flex items-center justify-center gap-2 font-medium shadow-inner">
-          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+          <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
           <span>Connexion rétablie — Synchronisation automatique de {pendingSyncCount} opération(s) en cours...</span>
           <button 
+            type="button"
             onClick={() => forceSyncCloudData()}
-            className="underline text-[11px] font-bold hover:text-blue-100 ml-2"
+            className="underline text-[11px] font-bold hover:text-blue-100 ml-2 cursor-pointer"
           >
             Forcer maintenant
+          </button>
+        </div>
+      )}
+      {isOnline && pendingSyncCount > 0 && !hasFirebaseSession && (
+        <div className="bg-amber-600 text-white px-4 py-1.5 text-xs text-center flex items-center justify-center gap-2 flex-wrap font-medium shadow-inner">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          <span>{pendingSyncCount} opération(s) en attente Cloud — Connexion Google requise</span>
+          <button 
+            type="button"
+            onClick={async () => {
+              const res = await connectGoogleAdminSync();
+              if (res.success) {
+                await forceSyncCloudData();
+              }
+            }}
+            className="underline text-[11px] font-bold hover:text-amber-100 ml-1 cursor-pointer"
+          >
+            Connecter Google
           </button>
         </div>
       )}

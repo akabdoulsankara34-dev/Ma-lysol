@@ -75,6 +75,9 @@ export const PlatformAdminView: React.FC = () => {
     connectGoogleAdminSync,
     forceSyncCloudData,
     importBackupData,
+    generateBusinessesTransferCode,
+    generateBusinessesTransferLink,
+    importBusinessesTransferToken,
     pendingSyncCount,
     lockPlatformAdmin,
     resetToDemoData,
@@ -83,6 +86,10 @@ export const PlatformAdminView: React.FC = () => {
 
   const [activeAdminTab, setActiveAdminTab] = useState<'businesses' | 'overview' | 'users' | 'store' | 'audit' | 'tools' | 'digisolia'>('businesses');
   const [syncStatusMsg, setSyncStatusMsg] = useState<string | null>(null);
+  const [cloudBannerFeedback, setCloudBannerFeedback] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [transferTokenInput, setTransferTokenInput] = useState('');
+  const [transferFeedback, setTransferFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [copiedTransferKind, setCopiedTransferKind] = useState<'link' | 'code' | null>(null);
   const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
   const confirmedCloudSet = React.useMemo(() => new Set(confirmedCloudBizIds), [confirmedCloudBizIds]);
@@ -236,23 +243,73 @@ export const PlatformAdminView: React.FC = () => {
       await handleGoogleAdminConnect();
       return;
     }
+    setCloudBannerFeedback({ type: 'info', text: 'Synchronisation Cloud Firestore en cours...' });
     setSyncStatusMsg('Synchronisation Cloud Firestore en cours...');
     await forceSyncCloudData();
+    setCloudBannerFeedback({ type: 'success', text: 'Synchronisation terminée avec Cloud Firestore.' });
     setSyncStatusMsg('Synchronisation terminée avec Cloud Firestore.');
     setTimeout(() => setSyncStatusMsg(null), 4000);
   };
 
   const handleGoogleAdminConnect = async () => {
     setIsConnectingGoogle(true);
+    setCloudBannerFeedback({ type: 'info', text: 'Ouverture de la connexion Google Administrateur...' });
     try {
       const res = await connectGoogleAdminSync();
       setSyncStatusMsg(res.message);
+      setCloudBannerFeedback({ type: res.success ? 'success' : 'error', text: res.message });
       if (res.success) {
         await forceSyncCloudData();
       }
-      setTimeout(() => setSyncStatusMsg(null), 5000);
+      setTimeout(() => setSyncStatusMsg(null), 6000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erreur lors de la connexion Google.';
+      setCloudBannerFeedback({ type: 'error', text: msg });
+      setSyncStatusMsg(msg);
     } finally {
       setIsConnectingGoogle(false);
+    }
+  };
+
+  const handleCopyTransfer = async (kind: 'link' | 'code') => {
+    try {
+      const value = kind === 'link' ? generateBusinessesTransferLink() : generateBusinessesTransferCode();
+      await navigator.clipboard.writeText(value);
+      setCopiedTransferKind(kind);
+      setTransferFeedback({
+        type: 'success',
+        text:
+          kind === 'link'
+            ? `Lien de transfert copié (${allBusinesses.length} entreprises). Envoyez-le par WhatsApp et ouvrez-le sur l'autre téléphone !`
+            : `Code BP-SYNC copié (${allBusinesses.length} entreprises). Collez-le sur l'autre téléphone dans la zone ci-dessous.`,
+      });
+      setTimeout(() => setCopiedTransferKind(null), 3000);
+    } catch {
+      setTransferFeedback({
+        type: 'error',
+        text: 'Impossible de copier automatiquement. Utilisez l’export JSON dans Sauvegardes Système.',
+      });
+    }
+  };
+
+  const handleImportTransferToken = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!transferTokenInput.trim()) return;
+    try {
+      const res = await importBusinessesTransferToken(transferTokenInput);
+      setTransferTokenInput('');
+      setTransferFeedback({
+        type: 'success',
+        text:
+          res.importedBusinesses > 0
+            ? `Succès : ${res.importedBusinesses} nouvelle(s) entreprise(s) et ${res.importedUsers} compte(s) importés sur cet appareil !`
+            : 'Toutes les entreprises de ce lien/code sont déjà enregistrées sur cet appareil.',
+      });
+    } catch (err) {
+      setTransferFeedback({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Lien ou code de transfert invalide.',
+      });
     }
   };
 
@@ -460,67 +517,159 @@ export const PlatformAdminView: React.FC = () => {
       {activeAdminTab === 'businesses' && (
         <div className="space-y-6">
           {/* Cloud Sync Diagnostics & Multi-Device Consistency Bar */}
-          <div className={`p-4 sm:p-5 rounded-2xl border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 ${
+          <div className={`p-4 sm:p-5 rounded-2xl border space-y-3 ${
             !hasFirebaseSession || cloudSyncError
               ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-100'
               : 'bg-sky-50/70 dark:bg-sky-950/30 border-sky-200 dark:border-sky-900/60 text-slate-800 dark:text-slate-200'
           }`}>
-            <div className="flex items-start gap-3">
-              {!hasFirebaseSession || cloudSyncError ? (
-                <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-              ) : (
-                <Cloud className="h-5 w-5 text-blue-600 dark:text-sky-400 shrink-0 mt-0.5" />
-              )}
-              <div className="text-xs">
-                <p className="font-bold">
-                  {!hasFirebaseSession
-                    ? allBusinesses.length > 1
-                      ? `${allBusinesses.length} entreprises enregistrées localement — en attente d'envoi vers le Cloud`
-                      : `Synchronisation Cloud non connectée sur cet appareil (${allBusinesses.length} entreprise locale)`
-                    : cloudSyncError
-                    ? 'Alerte synchronisation Cloud Firestore'
-                    : `Synchronisation Multi-Appareils Active (${allBusinesses.length} entreprise(s))`}
-                </p>
-                <p className="text-[11px] opacity-90 mt-0.5 leading-relaxed">
-                  {!hasFirebaseSession
-                    ? allBusinesses.length > 1
-                      ? 'Connectez votre compte Google Administrateur sur ce téléphone pour envoyer vos entreprises locales vers Cloud Firestore et les rendre visibles sur vos autres appareils.'
-                      : 'Connectez votre compte Google Administrateur pour charger les entreprises enregistrées depuis vos autres appareils.'
-                    : cloudSyncError
-                    ? cloudSyncError
-                    : firebaseAuthEmail
-                    ? `Session Cloud vérifiée (${firebaseAuthEmail})${unconfirmedLocalCount > 0 ? ` · ${unconfirmedLocalCount} locale(s) en cours d'envoi` : ''}${pendingSyncCount > 0 ? ` · ${pendingSyncCount} modification(s) en attente` : ' · Synchronisé sur tous vos appareils'}`
-                    : `Session Cloud connectée${pendingSyncCount > 0 ? ` · ${pendingSyncCount} modification(s) en attente` : ' · Temps réel actif sur tous vos appareils'}`}
-                </p>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="flex items-start gap-3">
+                {!hasFirebaseSession || cloudSyncError ? (
+                  <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                ) : (
+                  <Cloud className="h-5 w-5 text-blue-600 dark:text-sky-400 shrink-0 mt-0.5" />
+                )}
+                <div className="text-xs">
+                  <p className="font-bold">
+                    {!hasFirebaseSession
+                      ? allBusinesses.length > 1
+                        ? `${allBusinesses.length} entreprises enregistrées localement — en attente d'envoi vers le Cloud`
+                        : `Synchronisation Cloud non connectée sur cet appareil (${allBusinesses.length} entreprise locale)`
+                      : cloudSyncError
+                      ? 'Alerte synchronisation Cloud Firestore'
+                      : `Synchronisation Multi-Appareils Active (${allBusinesses.length} entreprise(s))`}
+                  </p>
+                  <p className="text-[11px] opacity-90 mt-0.5 leading-relaxed">
+                    {!hasFirebaseSession
+                      ? allBusinesses.length > 1
+                        ? 'Connectez votre compte Google Administrateur sur ce téléphone pour envoyer vos entreprises locales vers Cloud Firestore et les rendre visibles sur vos autres appareils.'
+                        : 'Connectez votre compte Google Administrateur pour charger les entreprises enregistrées depuis vos autres appareils.'
+                      : cloudSyncError
+                      ? cloudSyncError
+                      : firebaseAuthEmail
+                      ? `Session Cloud vérifiée (${firebaseAuthEmail})${unconfirmedLocalCount > 0 ? ` · ${unconfirmedLocalCount} locale(s) en cours d'envoi` : ''}${pendingSyncCount > 0 ? ` · ${pendingSyncCount} modification(s) en attente` : ' · Synchronisé sur tous vos appareils'}`
+                      : `Session Cloud connectée${pendingSyncCount > 0 ? ` · ${pendingSyncCount} modification(s) en attente` : ' · Temps réel actif sur tous vos appareils'}`}
+                  </p>
+                </div>
               </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0 flex-wrap">
-              {(!hasFirebaseSession || isFirebaseAnonymous || cloudSyncError) && (
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                {(!hasFirebaseSession || isFirebaseAnonymous || cloudSyncError) && (
+                  <button
+                    type="button"
+                    onClick={handleGoogleAdminConnect}
+                    disabled={isConnectingGoogle}
+                    className="px-3.5 py-2.5 rounded-xl bg-[#163B65] hover:bg-[#1E4C80] disabled:opacity-60 text-white text-xs font-bold transition cursor-pointer shadow-xs"
+                  >
+                    {isConnectingGoogle
+                      ? 'Connexion...'
+                      : !hasFirebaseSession
+                      ? allBusinesses.length > 1
+                        ? `Connecter Google & Envoyer (${allBusinesses.length})`
+                        : 'Connecter Google & Charger Cloud'
+                      : 'Connexion Google Admin'}
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={handleGoogleAdminConnect}
-                  disabled={isConnectingGoogle}
-                  className="px-3.5 py-2.5 rounded-xl bg-[#163B65] hover:bg-[#1E4C80] disabled:opacity-60 text-white text-xs font-bold transition cursor-pointer shadow-xs"
+                  onClick={handleForceSync}
+                  disabled={isSyncing || !isOnline}
+                  className="px-3 py-2 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
                 >
-                  {isConnectingGoogle
-                    ? 'Connexion...'
-                    : !hasFirebaseSession
-                    ? allBusinesses.length > 1
-                      ? `Connecter Google & Envoyer (${allBusinesses.length})`
-                      : 'Connecter Google & Charger Cloud'
-                    : 'Connexion Google Admin'}
+                  <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                  <span>{isSyncing ? 'Sync...' : 'Forcer Sync Cloud'}</span>
                 </button>
-              )}
-              <button
-                type="button"
-                onClick={handleForceSync}
-                disabled={isSyncing || !isOnline}
-                className="px-3 py-2 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
-              >
-                <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                <span>{isSyncing ? 'Sync...' : 'Forcer Sync Cloud'}</span>
-              </button>
+              </div>
             </div>
+
+            {/* Inline Google Auth / Cloud feedback directly visible on mobile screens */}
+            {cloudBannerFeedback && (
+              <div
+                className={`p-3 rounded-xl text-xs font-medium flex items-start gap-2 border ${
+                  cloudBannerFeedback.type === 'error'
+                    ? 'bg-red-50 dark:bg-red-950/60 border-red-300 dark:border-red-800 text-red-800 dark:text-red-200'
+                    : cloudBannerFeedback.type === 'success'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
+                    : 'bg-blue-50 dark:bg-blue-950/60 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200'
+                }`}
+              >
+                {cloudBannerFeedback.type === 'error' ? (
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                ) : cloudBannerFeedback.type === 'success' ? (
+                  <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
+                ) : (
+                  <RefreshCw className="h-4 w-4 shrink-0 mt-0.5 animate-spin" />
+                )}
+                <span className="leading-relaxed">{cloudBannerFeedback.text}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Direct 2-Phone Instant Sync (Works even if mobile Google OAuth is blocked) */}
+          <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+                  <Share2 className="h-4 w-4 text-blue-600" />
+                  Transfert direct entre 2 téléphones (Lien ou Code BP-SYNC)
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  Copiez le lien depuis le téléphone qui possède vos {allBusinesses.length > 1 ? allBusinesses.length : '4'} entreprises, puis ouvrez-le ou collez-le sur l'autre appareil.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleCopyTransfer('link')}
+                  className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                >
+                  {copiedTransferKind === 'link' ? <Check className="h-3.5 w-3.5" /> : <ExternalLink className="h-3.5 w-3.5" />}
+                  <span>{copiedTransferKind === 'link' ? 'Lien copié !' : `Copier lien (${allBusinesses.length})`}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCopyTransfer('code')}
+                  className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border border-slate-200 dark:border-slate-700"
+                >
+                  {copiedTransferKind === 'code' ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                  <span>{copiedTransferKind === 'code' ? 'Code copié !' : 'Copier code BP-SYNC'}</span>
+                </button>
+              </div>
+            </div>
+
+            <form onSubmit={handleImportTransferToken} className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                value={transferTokenInput}
+                onChange={(e) => setTransferTokenInput(e.target.value)}
+                placeholder="Collez ici le lien ?bizsync=... ou le code BP-SYNC-... reçu de l'autre téléphone"
+                className="flex-1 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                type="submit"
+                disabled={!transferTokenInput.trim()}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer shrink-0"
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span>Importer les entreprises</span>
+              </button>
+            </form>
+
+            {transferFeedback && (
+              <div
+                className={`p-3 rounded-xl text-xs font-medium flex items-start gap-2 border ${
+                  transferFeedback.type === 'success'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
+                    : 'bg-red-50 dark:bg-red-950/50 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'
+                }`}
+              >
+                {transferFeedback.type === 'success' ? (
+                  <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                )}
+                <span>{transferFeedback.text}</span>
+              </div>
+            )}
           </div>
 
           {/* Header Action Card */}
