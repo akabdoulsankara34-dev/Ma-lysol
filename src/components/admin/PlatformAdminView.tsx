@@ -67,6 +67,12 @@ export const PlatformAdminView: React.FC = () => {
     isOnline, 
     isSyncing, 
     lastSyncedAt,
+    cloudSyncError,
+    firebaseAuthEmail,
+    isFirebaseAnonymous,
+    connectGoogleAdminSync,
+    forceSyncCloudData,
+    pendingSyncCount,
     lockPlatformAdmin,
     resetToDemoData,
     summary
@@ -74,6 +80,7 @@ export const PlatformAdminView: React.FC = () => {
 
   const [activeAdminTab, setActiveAdminTab] = useState<'businesses' | 'overview' | 'users' | 'store' | 'audit' | 'tools' | 'digisolia'>('businesses');
   const [syncStatusMsg, setSyncStatusMsg] = useState<string | null>(null);
+  const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
 
   // New Business Form Modal State
@@ -219,12 +226,25 @@ export const PlatformAdminView: React.FC = () => {
     }
   };
 
-  const handleForceSync = () => {
-    setSyncStatusMsg('Synchronisation manuelle déclenchée avec la base Firestore Cloud...');
-    setTimeout(() => {
-      setSyncStatusMsg('Synchronisation terminée avec succès ! Données à jour.');
-      setTimeout(() => setSyncStatusMsg(null), 3000);
-    }, 1200);
+  const handleForceSync = async () => {
+    setSyncStatusMsg('Synchronisation Cloud Firestore en cours...');
+    await forceSyncCloudData();
+    setSyncStatusMsg('Synchronisation terminée avec Cloud Firestore.');
+    setTimeout(() => setSyncStatusMsg(null), 4000);
+  };
+
+  const handleGoogleAdminConnect = async () => {
+    setIsConnectingGoogle(true);
+    try {
+      const res = await connectGoogleAdminSync();
+      setSyncStatusMsg(res.message);
+      if (res.success) {
+        await forceSyncCloudData();
+      }
+      setTimeout(() => setSyncStatusMsg(null), 5000);
+    } finally {
+      setIsConnectingGoogle(false);
+    }
   };
 
   const handleExportBackup = () => {
@@ -412,14 +432,64 @@ export const PlatformAdminView: React.FC = () => {
       {/* 1. BUSINESSES & ACCESS CODES TAB */}
       {activeAdminTab === 'businesses' && (
         <div className="space-y-6">
+          {/* Cloud Sync Diagnostics & Multi-Device Consistency Bar */}
+          <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 ${
+            cloudSyncError
+              ? 'bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900/60 text-red-900 dark:text-red-200'
+              : 'bg-sky-50/70 dark:bg-sky-950/30 border-sky-200 dark:border-sky-900/60 text-slate-800 dark:text-slate-200'
+          }`}>
+            <div className="flex items-start gap-3">
+              {cloudSyncError ? (
+                <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+              ) : (
+                <Cloud className="h-5 w-5 text-blue-600 dark:text-sky-400 shrink-0 mt-0.5" />
+              )}
+              <div className="text-xs">
+                <p className="font-bold">
+                  {cloudSyncError
+                    ? 'Alerte synchronisation Cloud Firestore'
+                    : `Synchronisation Multi-Appareils (${allBusinesses.length} entreprise(s) chargée(s))`}
+                </p>
+                <p className="text-[11px] opacity-85 mt-0.5">
+                  {cloudSyncError
+                    ? cloudSyncError
+                    : firebaseAuthEmail
+                    ? `Session Cloud vérifiée (${firebaseAuthEmail})${pendingSyncCount > 0 ? ` · ${pendingSyncCount} modification(s) en attente` : ''}`
+                    : `Session Cloud ${isFirebaseAnonymous ? 'anonyme active' : 'connectée'}${pendingSyncCount > 0 ? ` · ${pendingSyncCount} modification(s) en attente` : ' · Temps réel actif sur tous vos appareils'}`}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+              {(isFirebaseAnonymous || cloudSyncError) && (
+                <button
+                  type="button"
+                  onClick={handleGoogleAdminConnect}
+                  disabled={isConnectingGoogle}
+                  className="px-3 py-2 rounded-xl bg-[#163B65] hover:bg-[#1E4C80] disabled:opacity-60 text-white text-xs font-bold transition cursor-pointer"
+                >
+                  {isConnectingGoogle ? 'Connexion...' : 'Connexion Google Admin'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleForceSync}
+                disabled={isSyncing || !isOnline}
+                className="px-3 py-2 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>{isSyncing ? 'Sync...' : 'Forcer Sync Cloud'}</span>
+              </button>
+            </div>
+          </div>
+
           {/* Header Action Card */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
-              <h2 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
+              <h2 className="text-base sm:text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
                 <Building2 className="h-5 w-5 text-blue-600" />
                 Entreprises Enregistrées & Attribution des Codes d'Accès
               </h2>
-              <p className="text-xs text-slate-500 mt-1">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                 Chaque entreprise utilise son code unique pour se connecter à son espace de gestion et de caisse.
               </p>
             </div>

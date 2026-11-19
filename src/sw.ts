@@ -1,2 +1,0 @@
-// Service worker source
-export {};

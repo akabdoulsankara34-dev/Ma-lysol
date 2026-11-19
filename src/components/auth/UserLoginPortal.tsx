@@ -22,6 +22,7 @@ import {
   MapPin,
   Building2
 } from 'lucide-react';
+import { PWAInstallButton } from '../common/PWAInstallButton';
 
 export const UserLoginPortal: React.FC = () => {
   const { 
@@ -201,8 +202,9 @@ export const UserLoginPortal: React.FC = () => {
           </div>
         </div>
 
-        {/* Action button: Change store + Connectivity status */}
+        {/* Action button: PWA Install + Change store + Connectivity status */}
         <div className="flex items-center space-x-2">
+          <PWAInstallButton variant="dark-portal" />
           <button
             type="button"
             onClick={logoutBusiness}

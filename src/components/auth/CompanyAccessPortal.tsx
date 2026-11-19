@@ -7,6 +7,7 @@ import {
   AlertCircle,
   RefreshCw
 } from 'lucide-react';
+import { PWAInstallButton } from '../common/PWAInstallButton';
 
 export const CompanyAccessPortal: React.FC = () => {
   const { 
@@ -82,12 +83,15 @@ export const CompanyAccessPortal: React.FC = () => {
           </div>
         </div>
 
-        {/* Connectivity status badge */}
-        <div className="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700/80 text-xs text-slate-300">
-          <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-          <span className="hidden sm:inline font-medium">
-            {isOnline ? 'Cloud Firestore Actif' : 'Mode Hors-ligne'}
-          </span>
+        {/* PWA Install & Connectivity status */}
+        <div className="flex items-center gap-2">
+          <PWAInstallButton variant="dark-portal" />
+          <div className="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700/80 text-xs text-slate-300">
+            <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            <span className="hidden sm:inline font-medium">
+              {isOnline ? 'Cloud Firestore Actif' : 'Mode Hors-ligne'}
+            </span>
+          </div>
         </div>
       </div>
 

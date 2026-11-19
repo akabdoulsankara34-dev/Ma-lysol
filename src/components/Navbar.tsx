@@ -24,6 +24,7 @@ import {
   Headphones
 } from 'lucide-react';
 import { useDigiSolia } from '../digisolia';
+import { PWAInstallButton } from './common/PWAInstallButton';
 
 export const Navbar: React.FC = () => {
   const { 
@@ -279,6 +280,9 @@ export const Navbar: React.FC = () => {
                 </span>
               )}
             </button>
+
+            {/* In-App PWA Install Prompt */}
+            <PWAInstallButton variant="navbar" />
 
             {/* Light / Dark Theme Toggle */}
             <button

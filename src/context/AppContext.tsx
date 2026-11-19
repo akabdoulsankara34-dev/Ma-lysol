@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   Business, 
   AppUser, 
@@ -40,11 +40,19 @@ import {
 } from '../data/initialDemoData';
 import { soundEffects } from '../lib/sound';
 import { isToday, getSafeDate, getSafeDateString } from '../lib/dateUtils';
-import { db, sanitizeForFirestore, ensureFirebaseAuth } from '../lib/firebase';
+import {
+  auth,
+  db,
+  sanitizeForFirestore,
+  ensureFirebaseAuth,
+  getLastFirebaseAuthError,
+} from '../lib/firebase';
+import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup } from 'firebase/auth';
 import { 
   collection, 
   doc, 
-  getDocs, 
+  getDocs,
+  getDocsFromServer,
   setDoc, 
   updateDoc, 
   deleteDoc,
@@ -261,6 +269,10 @@ interface AppContextType {
   isOnline: boolean;
   isSyncing: boolean;
   lastSyncedAt: Date | null;
+  cloudSyncError: string | null;
+  firebaseAuthEmail: string | null;
+  isFirebaseAnonymous: boolean;
+  connectGoogleAdminSync: () => Promise<{ success: boolean; message: string }>;
   forceSyncCloudData: () => Promise<void>;
   pendingSyncCount: number;
   offlineQueue: QueuedMutation[];
@@ -276,6 +288,8 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 const LOCAL_STORAGE_KEY = 'bizpilot_burkina_v2';
 const OFFLINE_QUEUE_KEY = 'bizpilot_burkina_offline_queue_v1';
+const DELETED_BUSINESSES_KEY = 'bizpilot_deleted_businesses_v1';
+const RECONCILED_LOCAL_BIZ_KEY = 'bizpilot_reconciled_local_v1';
 const PLATFORM_ADMIN_PIN = '761278';
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -374,7 +388,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(new Date());
-  
+  const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
+  const [firebaseAuthUid, setFirebaseAuthUid] = useState<string | null>(auth.currentUser?.uid || null);
+  const [firebaseAuthEmail, setFirebaseAuthEmail] = useState<string | null>(auth.currentUser?.email || null);
+  const [isFirebaseAnonymous, setIsFirebaseAnonymous] = useState<boolean>(
+    !auth.currentUser || auth.currentUser.isAnonymous
+  );
+
+  // Refs to read fresh multi-tenant lists inside sync hooks without re-subscribing
+  const allBusinessesRef = useRef<Business[]>(allBusinesses);
+  allBusinessesRef.current = allBusinesses;
+  const allUsersRef = useRef<AppUser[]>(allUsers);
+  allUsersRef.current = allUsers;
+  const offlineQueueRef = useRef<QueuedMutation[]>(offlineQueue);
+  offlineQueueRef.current = offlineQueue;
+
+  useEffect(() => {
+    return onAuthStateChanged(auth, (fbUser) => {
+      setFirebaseAuthUid(fbUser?.uid || null);
+      setFirebaseAuthEmail(fbUser?.email || null);
+      setIsFirebaseAnonymous(!fbUser || fbUser.isAnonymous || !fbUser.email);
+      if (fbUser) {
+        setCloudSyncError(null);
+      }
+    });
+  }, []);
+
+  const connectGoogleAdminSync = useCallback(async (): Promise<{ success: boolean; message: string }> => {
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      const cred = await signInWithPopup(auth, provider);
+      setCloudSyncError(null);
+      return {
+        success: true,
+        message: `Connecté avec ${cred.user.email || 'Google'}. Synchronisation multi-appareils active.`,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        message: `Connexion Google annulée ou bloquée : ${msg}`,
+      };
+    }
+  }, []);
+
   // Staff PIN verification modal
   const [userToSwitchWithPin, setUserToSwitchWithPin] = useState<AppUser | null>(null);
 
@@ -561,11 +619,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const createBusiness = async (businessData: Omit<Business, 'id' | 'createdAt'>, ownerPin = '1234'): Promise<Business> => {
     const businessId = `biz_${Date.now().toString(36)}_${Math.random().toString(36).substr(2, 4)}`;
     const nowIso = new Date().toISOString();
+    const rawPrefix = (businessData.name || 'BIZ').replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase() || 'BIZ';
+    const fallbackCode = `BF-${rawPrefix}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const cleanAccessCode = (businessData.accessCode || '').trim().toUpperCase() || fallbackCode;
 
     const newBusiness: Business = {
       ...businessData,
       id: businessId,
-      accessCode: businessData.accessCode.trim().toUpperCase(),
+      accessCode: cleanAccessCode,
       createdAt: nowIso,
     };
 
@@ -592,12 +653,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAllBusinesses(prev => [...prev, newBusiness]);
     setAllUsers(prev => [...prev, ownerUser]);
 
-    try {
-      await setDoc(doc(db, 'businesses', businessId), sanitizeForFirestore(newBusiness));
-      await setDoc(doc(db, 'users', ownerUser.id), sanitizeForFirestore(ownerUser));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, `businesses/${businessId}`);
-    }
+    await ensureFirebaseAuth();
+    await syncMutation('businesses', businessId, 'set', newBusiness, `Création entreprise ${newBusiness.name}`);
+    await syncMutation('users', ownerUser.id, 'set', ownerUser, `Création propriétaire ${ownerUser.name}`);
 
     return newBusiness;
   };
@@ -611,17 +669,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setBusiness(prev => ({ ...prev, ...updates }));
     }
 
-    try {
-      await updateDoc(doc(db, 'businesses', id), sanitizeForFirestore(updates));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `businesses/${id}`);
-    }
+    await ensureFirebaseAuth();
+    await syncMutation('businesses', id, 'update', updates, `Mise à jour entreprise ${id}`);
   };
 
   // Delete business
   const deleteBusiness = async (id: string) => {
     if (id === 'biz_maelys') {
       throw new Error('La boutique démo Maëlys ne peut pas être supprimée.');
+    }
+
+    try {
+      const existingDeleted: string[] = JSON.parse(localStorage.getItem(DELETED_BUSINESSES_KEY) || '[]');
+      if (!existingDeleted.includes(id)) {
+        localStorage.setItem(DELETED_BUSINESSES_KEY, JSON.stringify([...existingDeleted, id]));
+      }
+    } catch {
+      // ignore storage quota
     }
 
     setAllBusinesses(prev => prev.filter(b => b.id !== id));
@@ -634,17 +698,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCurrentUser(fallbackUsers[0] || initialUsers[0]);
     }
 
-    try {
-      await deleteDoc(doc(db, 'businesses', id));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `businesses/${id}`);
-    }
+    await ensureFirebaseAuth();
+    await syncMutation('businesses', id, 'delete', undefined, `Suppression entreprise ${id}`);
   };
 
   // Regenerate unique access code
   const regenerateAccessCode = async (businessId: string): Promise<string> => {
+    const targetBiz = allBusinesses.find(b => b.id === businessId) || business;
+    const rawPrefix = (targetBiz.name || 'BIZ').replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase() || 'BIZ';
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-    const newCode = `BF-${business.name.slice(0, 4).toUpperCase()}-${randomSuffix}`;
+    const newCode = `BF-${rawPrefix}-${randomSuffix}`;
     await updateBusiness(businessId, { accessCode: newCode });
     return newCode;
   };
@@ -686,11 +749,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setAllUsers(prev => [...prev, newUser]);
 
-    try {
-      await setDoc(doc(db, 'users', id), sanitizeForFirestore(newUser));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, 'users');
-    }
+    await ensureFirebaseAuth();
+    await syncMutation('users', id, 'set', newUser, `Ajout collaborateur ${newUser.name}`);
 
     return newUser;
   };
@@ -704,11 +764,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCurrentUser(prev => ({ ...prev, ...updates }));
     }
 
-    try {
-      await updateDoc(doc(db, 'users', userId), sanitizeForFirestore(updates));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
-    }
+    await ensureFirebaseAuth();
+    await syncMutation('users', userId, 'update', updates, `Mise à jour collaborateur ${userId}`);
   };
 
   const updateUserPin = async (userId: string, newPin: string) => {
@@ -731,11 +788,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
-    try {
-      await deleteDoc(doc(db, 'users', id));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `users/${id}`);
-    }
+    await ensureFirebaseAuth();
+    await syncMutation('users', id, 'delete', undefined, `Suppression collaborateur ${id}`);
   };
 
   const updateBusinessProfile = async (updates: Partial<Business>) => {
@@ -934,7 +988,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return;
       }
       try {
-        const res = await fetch('/manifest.json?probe=' + Date.now(), { method: 'HEAD', cache: 'no-store' });
+        const res = await fetch('/icon.svg?probe=' + Date.now(), { method: 'HEAD', cache: 'no-store' });
         if (res.ok) {
           setIsOnline(true);
         }
@@ -970,6 +1024,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [processOfflineQueue, offlineQueue.length]);
 
+  // Reconcile any pre-existing local-only businesses & their owner accounts to Firestore
+  const reconcileLocalBusinessesToCloud = useCallback(async (remoteBizIds: Set<string>) => {
+    try {
+      const alreadyReconciled = localStorage.getItem(RECONCILED_LOCAL_BIZ_KEY) === '1';
+      if (alreadyReconciled) return;
+
+      const deletedIds: string[] = JSON.parse(localStorage.getItem(DELETED_BUSINESSES_KEY) || '[]');
+      const missingLocalBusinesses = allBusinessesRef.current.filter(
+        b => !remoteBizIds.has(b.id) && !deletedIds.includes(b.id)
+      );
+
+      if (missingLocalBusinesses.length > 0) {
+        const batch = writeBatch(db);
+        const missingIds = new Set(missingLocalBusinesses.map(b => b.id));
+        missingLocalBusinesses.forEach(b => {
+          batch.set(doc(db, 'businesses', b.id), sanitizeForFirestore(b));
+        });
+        allUsersRef.current
+          .filter(u => missingIds.has(u.businessId))
+          .forEach(u => {
+            batch.set(doc(db, 'users', u.id), sanitizeForFirestore(u));
+          });
+        await batch.commit();
+      }
+      localStorage.setItem(RECONCILED_LOCAL_BIZ_KEY, '1');
+    } catch (err) {
+      console.warn('Local-to-cloud business reconciliation notice:', err);
+    }
+  }, []);
+
   // Multi-Device Real-Time Cloud Synchronization Engine with Firestore
   useEffect(() => {
     if (!isOnline) return;
@@ -992,8 +1076,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const setupFirestoreSync = async () => {
       try {
         setIsSyncing(true);
-        await ensureFirebaseAuth();
+        const fbUser = await ensureFirebaseAuth();
         if (isDisposed) return;
+
+        if (!fbUser && !auth.currentUser) {
+          const authErr = getLastFirebaseAuthError();
+          setCloudSyncError(
+            authErr
+              ? `Authentification Firebase requise pour synchroniser entre appareils (${authErr}). Utilisez « Connexion Google Admin ».`
+              : 'Authentification Firebase en attente pour la synchronisation Cloud.'
+          );
+          setIsSyncing(false);
+          return;
+        }
+
+        setCloudSyncError(null);
 
         try {
           await getDocFromServer(doc(db, 'system', 'connection_test')).catch(() => null);
@@ -1001,18 +1098,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           // Non-blocking connection test
         }
 
-        // Initial Cloud Seeding Check: If Firestore is fresh / empty across all devices, seed standard master dataset
+        // Initial Cloud Seeding & Pre-existing Local Reconciliation Check
         try {
-          const bizSnapshot = await getDocs(collection(db, 'businesses'));
+          const bizSnapshot = await getDocsFromServer(collection(db, 'businesses')).catch(() =>
+            getDocs(collection(db, 'businesses'))
+          );
           if (bizSnapshot.empty) {
             console.log('Seeding initial master data to Cloud Firestore for multi-device collaboration...');
             const batch = writeBatch(db);
-            
-            initialBusinesses.forEach(b => {
-              batch.set(doc(db, 'businesses', b.id), sanitizeForFirestore(b));
+
+            // Seed initialBusinesses plus any locally created businesses already on this device
+            const seenBizIds = new Set<string>();
+            [...initialBusinesses, ...allBusinessesRef.current].forEach(b => {
+              if (!seenBizIds.has(b.id)) {
+                seenBizIds.add(b.id);
+                batch.set(doc(db, 'businesses', b.id), sanitizeForFirestore(b));
+              }
             });
-            initialUsers.forEach(u => {
-              batch.set(doc(db, 'users', u.id), sanitizeForFirestore(u));
+            const seenUserIds = new Set<string>();
+            [...initialUsers, ...allUsersRef.current].forEach(u => {
+              if (!seenUserIds.has(u.id)) {
+                seenUserIds.add(u.id);
+                batch.set(doc(db, 'users', u.id), sanitizeForFirestore(u));
+              }
             });
             initialProducts.forEach(p => {
               batch.set(doc(db, 'products', p.id), sanitizeForFirestore(p));
@@ -1040,25 +1148,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             });
 
             await batch.commit();
+            localStorage.setItem(RECONCILED_LOCAL_BIZ_KEY, '1');
+          } else {
+            const remoteIds = new Set<string>();
+            bizSnapshot.forEach(d => remoteIds.add(d.id));
+            await reconcileLocalBusinessesToCloud(remoteIds);
           }
         } catch (seedErr) {
+          const msg = seedErr instanceof Error ? seedErr.message : String(seedErr);
+          if (msg.toLowerCase().includes('permission')) {
+            setCloudSyncError(`Accès Firestore refusé (${msg}). Connectez-vous avec Google Admin pour synchroniser.`);
+          }
           console.warn('Notice on initial seeding to Firestore:', seedErr);
         }
+
+        if (isDisposed) return;
 
         // 1. Real-Time Businesses Listener
         const bizCol = collection(db, 'businesses');
         unsubscribeBusinesses = onSnapshot(bizCol, (snapshot) => {
+          setCloudSyncError(null);
           if (!snapshot.empty) {
             const list: Business[] = [];
+            const remoteIds = new Set<string>();
             snapshot.forEach(docSnap => {
+              remoteIds.add(docSnap.id);
               list.push({ id: docSnap.id, ...docSnap.data() } as Business);
             });
-            if (list.length > 0) {
-              setAllBusinesses(list);
-              setBusiness(prev => list.find(b => b.id === prev.id) || prev);
+            // Keep any businesses currently sitting in offline outbox queue until uploaded
+            const pendingBizCreates = offlineQueueRef.current
+              .filter(m => m.collection === 'businesses' && m.action === 'set' && m.payload && !remoteIds.has(m.docId))
+              .map(m => m.payload as Business);
+            const mergedList = [...list, ...pendingBizCreates];
+            if (mergedList.length > 0) {
+              setAllBusinesses(mergedList);
+              setBusiness(prev => mergedList.find(b => b.id === prev.id) || prev);
             }
           }
-        }, (err) => handleFirestoreError(err, OperationType.LIST, 'businesses'));
+        }, (err) => {
+          const info = handleFirestoreError(err, OperationType.LIST, 'businesses');
+          setCloudSyncError(`Erreur synchronisation entreprises : ${info.error}`);
+        });
 
         // 2. Real-Time Products Listener
         const prodCol = collection(db, 'products');
@@ -1218,17 +1348,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubscribeInvoices?.();
       unsubscribeAvoirs?.();
     };
-  }, [isOnline]);
+  }, [isOnline, firebaseAuthUid, reconcileLocalBusinessesToCloud]);
 
-  // Manual / On-demand force sync helper
+  // Manual / On-demand force sync helper (pushes local outbox & missing businesses, pulls fresh server snapshot)
   const forceSyncCloudData = useCallback(async () => {
-    if (!navigator.onLine) return;
+    if (!navigator.onLine) {
+      setCloudSyncError('Appareil hors-ligne : impossible de joindre Cloud Firestore.');
+      return;
+    }
     setIsSyncing(true);
     try {
+      const fbUser = await ensureFirebaseAuth();
+      if (!fbUser && !auth.currentUser) {
+        const authErr = getLastFirebaseAuthError();
+        setCloudSyncError(
+          `Authentification Cloud requise${authErr ? ` (${authErr})` : ''}. Cliquez sur « Connexion Google Admin ».`
+        );
+        return;
+      }
+
       // First process any pending offline queue
       await processOfflineQueue();
 
-      await ensureFirebaseAuth();
+      // Check server state for businesses first and reconcile any un-synced local businesses
+      const preBizSnap = await getDocsFromServer(collection(db, 'businesses')).catch(() =>
+        getDocs(collection(db, 'businesses'))
+      );
+      const existingRemoteBizIds = new Set<string>();
+      preBizSnap.forEach(d => existingRemoteBizIds.add(d.id));
+      await reconcileLocalBusinessesToCloud(existingRemoteBizIds);
+
       const [
         bizSnap,
         prodSnap,
@@ -1243,14 +1392,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         invSnap,
         avSnap
       ] = await Promise.all([
-        getDocs(collection(db, 'businesses')),
+        getDocsFromServer(collection(db, 'businesses')).catch(() => getDocs(collection(db, 'businesses'))),
         getDocs(collection(db, 'products')),
         getDocs(collection(db, 'sales')),
         getDocs(collection(db, 'customers')),
         getDocs(collection(db, 'customer_payments')),
         getDocs(collection(db, 'stock_movements')),
         getDocs(collection(db, 'expenses')),
-        getDocs(collection(db, 'users')),
+        getDocsFromServer(collection(db, 'users')).catch(() => getDocs(collection(db, 'users'))),
         getDocs(collection(db, 'cash_sessions')),
         getDocs(collection(db, 'quotations')),
         getDocs(collection(db, 'invoices')),
@@ -1331,13 +1480,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setAvoirs(avList.sort((a, b) => new Date(b.dateCreation).getTime() - new Date(a.dateCreation).getTime()));
       }
 
+      setCloudSyncError(null);
       setLastSyncedAt(new Date());
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setCloudSyncError(`Échec de synchronisation Cloud : ${msg}`);
       console.warn('Manual cloud sync notice:', err);
     } finally {
       setIsSyncing(false);
     }
-  }, [processOfflineQueue]);
+  }, [processOfflineQueue, reconcileLocalBusinessesToCloud]);
 
   // Current Business scoped entities (Multi-tenancy isolation)
   const scopedProducts = useMemo(() => 
@@ -3006,6 +3158,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isOnline,
         isSyncing,
         lastSyncedAt,
+        cloudSyncError,
+        firebaseAuthEmail,
+        isFirebaseAnonymous,
+        connectGoogleAdminSync,
         forceSyncCloudData,
         pendingSyncCount: offlineQueue.length,
         offlineQueue,

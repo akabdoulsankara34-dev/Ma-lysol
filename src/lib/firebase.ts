@@ -1,9 +1,11 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { 
-  getFirestore, 
-  setLogLevel
-} from 'firebase/firestore';
-import { getAuth, signInAnonymously, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { getFirestore, setLogLevel } from 'firebase/firestore';
+import {
+  getAuth,
+  signInAnonymously,
+  onAuthStateChanged,
+  User as FirebaseUser,
+} from 'firebase/auth';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
 // Suppress benign internal connection warnings and timeouts in sandboxed iframe / dev environments
@@ -28,21 +30,45 @@ export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getA
 // Initialize Firebase Auth
 export const auth = getAuth(app);
 
-// Authenticate anonymously in background to ensure stable, authorized Firestore session
-let currentAuthUser: FirebaseUser | null = null;
+let lastFirebaseAuthError: string | null = null;
+let pendingAuthPromise: Promise<FirebaseUser | null> | null = null;
+
 onAuthStateChanged(auth, (user) => {
-  currentAuthUser = user;
+  if (user) {
+    lastFirebaseAuthError = null;
+  }
 });
 
+export function getLastFirebaseAuthError(): string | null {
+  return lastFirebaseAuthError;
+}
+
 export const ensureFirebaseAuth = async (): Promise<FirebaseUser | null> => {
-  if (auth.currentUser) return auth.currentUser;
-  try {
-    const cred = await signInAnonymously(auth);
-    return cred.user;
-  } catch (err) {
-    console.warn('Anonymous auth note (proceeding with Firestore):', err);
-    return null;
+  if (auth.currentUser) {
+    lastFirebaseAuthError = null;
+    return auth.currentUser;
   }
+
+  if (pendingAuthPromise) {
+    return pendingAuthPromise;
+  }
+
+  pendingAuthPromise = (async () => {
+    try {
+      const cred = await signInAnonymously(auth);
+      lastFirebaseAuthError = null;
+      return cred.user;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      lastFirebaseAuthError = msg;
+      console.warn('Anonymous auth note (proceeding with Firestore):', msg);
+      return auth.currentUser;
+    } finally {
+      pendingAuthPromise = null;
+    }
+  })();
+
+  return pendingAuthPromise;
 };
 
 // Attempt non-blocking auth immediately
@@ -63,8 +89,8 @@ export function sanitizeForFirestore<T>(data: T): T {
 
   if (Array.isArray(data)) {
     return data
-      .filter(item => item !== undefined)
-      .map(item => sanitizeForFirestore(item)) as unknown as T;
+      .filter((item) => item !== undefined)
+      .map((item) => sanitizeForFirestore(item)) as unknown as T;
   }
 
   if (typeof data === 'object' && !(data instanceof Date)) {
@@ -79,4 +105,3 @@ export function sanitizeForFirestore<T>(data: T): T {
 
   return data;
 }
-
