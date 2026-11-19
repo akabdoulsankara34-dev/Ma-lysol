@@ -5,7 +5,7 @@ import App from './App.tsx';
 import './index.css';
 import './hooks/usePWAInstall';
 
-// Enregistre le Service Worker PWA en production (Workbox) et en dev/aperçu sans conflit HMR
+// Enregistre le Service Worker PWA en production (Workbox) et purge tout ancien dev-sw.js en développement
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
   if (import.meta.env.PROD) {
     registerSW({
@@ -20,8 +20,27 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
       },
     });
   } else {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => null);
+    window.addEventListener('load', async () => {
+      try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(
+          regs
+            .filter((r) => {
+              const scriptUrl = r.active?.scriptURL || r.waiting?.scriptURL || r.installing?.scriptURL || '';
+              return scriptUrl.includes('dev-sw.js');
+            })
+            .map((r) => r.unregister())
+        );
+        if ('caches' in window) {
+          const keys = await caches.keys();
+          await Promise.all(
+            keys.filter((k) => k.includes('workbox-precache')).map((k) => caches.delete(k))
+          );
+        }
+        await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+      } catch {
+        // Non-blocking in restricted iframe contexts
+      }
     });
   }
 }

@@ -41,16 +41,14 @@ const pwaManifest = {
 };
 
 function devPwaFallbackPlugin(): Plugin {
-  const isHmrDisabled = process.env.DISABLE_HMR === 'true';
   return {
     name: 'bizpilot-dev-pwa-fallback',
     apply: 'serve',
     transformIndexHtml(html) {
-      if (!isHmrDisabled || html.includes('manifest.webmanifest')) return html;
+      if (html.includes('manifest.webmanifest')) return html;
       return html.replace('</head>', '  <link rel="manifest" href="/manifest.webmanifest" />\n  </head>');
     },
     configureServer(server) {
-      if (!isHmrDisabled) return;
       server.middlewares.use((req, res, next) => {
         const cleanUrl = (req.url || '').split('?')[0];
         if (cleanUrl === '/manifest.webmanifest') {
@@ -59,13 +57,42 @@ function devPwaFallbackPlugin(): Plugin {
           res.end(JSON.stringify(pwaManifest));
           return;
         }
+        if (cleanUrl === '/@vite-plugin-pwa/pwa-entry-point-loaded') {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+          res.end('export default function registerDevSW() {}');
+          return;
+        }
+        if (cleanUrl === '/dev-sw.js') {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+          res.setHeader('Service-Worker-Allowed', '/');
+          res.end(`
+            self.addEventListener('install', () => self.skipWaiting());
+            self.addEventListener('activate', (event) => {
+              event.waitUntil(
+                caches.keys()
+                  .then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
+                  .then(() => self.registration.unregister())
+                  .then(() => self.clients.claim())
+              );
+            });
+          `);
+          return;
+        }
         if (cleanUrl === '/sw.js') {
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
           res.setHeader('Service-Worker-Allowed', '/');
           res.end(`
             self.addEventListener('install', () => self.skipWaiting());
-            self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+            self.addEventListener('activate', (event) => {
+              event.waitUntil(
+                caches.keys()
+                  .then((keys) => Promise.all(keys.filter((k) => k.includes('workbox-precache')).map((k) => caches.delete(k))))
+                  .then(() => self.clients.claim())
+              );
+            });
             self.addEventListener('fetch', () => {});
           `);
           return;
@@ -77,7 +104,6 @@ function devPwaFallbackPlugin(): Plugin {
 }
 
 export default defineConfig(() => {
-  const isHmrDisabled = process.env.DISABLE_HMR === 'true';
   return {
     plugins: [
       react(),
@@ -133,9 +159,8 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          // Disable VitePWA's HMR-dependent dev script when DISABLE_HMR=true to prevent @vite/client ws.send(undefined) crash
-          enabled: !isHmrDisabled,
-          type: 'module',
+          // Disabled in dev because devPwaFallbackPlugin serves /manifest.webmanifest and /sw.js cleanly without import.meta.hot.send
+          enabled: false,
         },
       }),
     ],
