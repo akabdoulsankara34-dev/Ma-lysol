@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Calendar,
   CheckCircle2,
@@ -24,6 +24,14 @@ export const UserProfileView: React.FC = () => {
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(
     null
   );
+
+  useEffect(() => {
+    setFirstName(user.firstName);
+    setLastName(user.lastName);
+    setEmail(user.email || '');
+    setPhone(user.phone || '');
+    setStatusMsg(null);
+  }, [user.userId, user.firstName, user.lastName, user.email, user.phone]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();

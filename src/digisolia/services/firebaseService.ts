@@ -9,9 +9,14 @@ import {
   query,
   setDoc,
   updateDoc,
-  where,
   writeBatch,
 } from 'firebase/firestore';
+import {
+  GoogleAuthProvider,
+  User as FirebaseUser,
+  onAuthStateChanged,
+  signInWithPopup,
+} from 'firebase/auth';
 import { auth, db, ensureFirebaseAuth, sanitizeForFirestore } from '../../lib/firebase';
 import { DIGISOLIA_CATALOG_APPS } from '../config/dafConfig';
 import {
@@ -101,6 +106,17 @@ export async function testDafConnection(): Promise<boolean> {
     // Permission error on test doc still proves network connectivity to Firestore
     return true;
   }
+}
+
+export function subscribeDafAuthState(cb: (user: FirebaseUser | null) => void): () => void {
+  return onAuthStateChanged(auth, cb);
+}
+
+export async function signInAdminWithGoogle(): Promise<FirebaseUser> {
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  const cred = await signInWithPopup(auth, provider);
+  return cred.user;
 }
 
 export const dafFirebaseService = {
@@ -467,7 +483,7 @@ export const dafFirebaseService = {
   },
 
   subscribeDirectoryUsers(onChange: (users: Record<string, any>[]) => void): () => void {
-    const q = query(collection(db, 'users'), where('active', 'in', [true, false]));
+    const q = query(collection(db, 'users'));
     return onSnapshot(
       q,
       (snap) => {

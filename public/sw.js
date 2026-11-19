@@ -1,5 +1,5 @@
 // BizPilot Burkina - Service Worker Pro (Offline Cache & Sync)
-const CACHE_VERSION = 'bizpilot-v6';
+const CACHE_VERSION = 'bizpilot-v7';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 

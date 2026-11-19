@@ -15,14 +15,20 @@ import {
   Star,
   UserCog,
   Users,
+  LogIn,
 } from 'lucide-react';
+import { ensureFirebaseAuth } from '../../lib/firebase';
 import {
   ADMIN_ROLE_LABELS,
   ADMIN_ROLE_PERMISSIONS,
   DIGISOLIA_CATALOG_APPS,
 } from '../config/dafConfig';
 import { useDigiSolia } from '../hooks/useDigiSolia';
-import { dafFirebaseService } from '../services/firebaseService';
+import {
+  dafFirebaseService,
+  signInAdminWithGoogle,
+  subscribeDafAuthState,
+} from '../services/firebaseService';
 import {
   DigiSoliaAdminLog,
   DigiSoliaAdminRole,
@@ -65,6 +71,9 @@ export const DigiSoliaAdminView: React.FC = () => {
   // Role simulation or active admin session
   const [activeAdminRole, setActiveAdminRole] = useState<DigiSoliaAdminRole>('super_admin');
   const [adminNotice, setAdminNotice] = useState<string | null>(null);
+  const [firebaseAuthEmail, setFirebaseAuthEmail] = useState<string | null>(null);
+  const [isFirebaseAnonymous, setIsFirebaseAnonymous] = useState<boolean>(true);
+  const [isConnectingGoogle, setIsConnectingGoogle] = useState<boolean>(false);
 
   // Forms state
   const [newAppId, setNewAppId] = useState('');
@@ -92,25 +101,46 @@ export const DigiSoliaAdminView: React.FC = () => {
     [activeAdminRole, user.fullName, user.userId]
   );
 
-  // Subscribe to global DAF admin collections
+  // Track Firebase Auth state (Anonymous vs Verified Google Admin)
+  useEffect(() => {
+    return subscribeDafAuthState((fbUser) => {
+      setFirebaseAuthEmail(fbUser?.email || null);
+      setIsFirebaseAnonymous(!fbUser || fbUser.isAnonymous || !fbUser.email);
+    });
+  }, []);
+
+  // Subscribe to global DAF admin collections after Firebase Auth is ready
   useEffect(() => {
     if (!host.isOnline) return;
-    dafFirebaseService.ensureAppCatalogRegistered(host.appId).catch(() => null);
+    let cancelled = false;
+    let unsubApps: (() => void) | undefined;
+    let unsubUsers: (() => void) | undefined;
+    let unsubAdmins: (() => void) | undefined;
+    let unsubNotifs: (() => void) | undefined;
+    let unsubLogs: (() => void) | undefined;
 
-    const unsubApps = dafFirebaseService.subscribeRegisteredApps(setApps);
-    const unsubUsers = dafFirebaseService.subscribeDirectoryUsers(setDirectoryUsers);
-    const unsubAdmins = dafFirebaseService.subscribeAdministrators(setAdministrators);
-    const unsubNotifs = dafFirebaseService.subscribeAllNotifications(setAllNotifications);
-    const unsubLogs = dafFirebaseService.subscribeAdminLogs(setAdminLogs);
+    (async () => {
+      await ensureFirebaseAuth();
+      if (cancelled) return;
+      await dafFirebaseService.ensureAppCatalogRegistered(host.appId).catch(() => null);
+      if (cancelled) return;
+
+      unsubApps = dafFirebaseService.subscribeRegisteredApps(setApps);
+      unsubUsers = dafFirebaseService.subscribeDirectoryUsers(setDirectoryUsers);
+      unsubAdmins = dafFirebaseService.subscribeAdministrators(setAdministrators);
+      unsubNotifs = dafFirebaseService.subscribeAllNotifications(setAllNotifications);
+      unsubLogs = dafFirebaseService.subscribeAdminLogs(setAdminLogs);
+    })();
 
     return () => {
-      unsubApps();
-      unsubUsers();
-      unsubAdmins();
-      unsubNotifs();
-      unsubLogs();
+      cancelled = true;
+      unsubApps?.();
+      unsubUsers?.();
+      unsubAdmins?.();
+      unsubNotifs?.();
+      unsubLogs?.();
     };
-  }, [host.appId, host.isOnline]);
+  }, [host.appId, host.isOnline, firebaseAuthEmail]);
 
   // Subscribe to feedback & support subcollections across all catalog / registered apps
   const trackedAppIds = useMemo(() => {
@@ -121,22 +151,28 @@ export const DigiSoliaAdminView: React.FC = () => {
 
   useEffect(() => {
     if (!host.isOnline || trackedAppIds.length === 0) return;
-
+    let cancelled = false;
     const unsubs: (() => void)[] = [];
-    for (const appId of trackedAppIds) {
-      unsubs.push(
-        dafFirebaseService.subscribeAppFeedback(appId, (items) => {
-          setFeedbackByApp((prev) => ({ ...prev, [appId]: items }));
-        })
-      );
-      unsubs.push(
-        dafFirebaseService.subscribeAppSupport(appId, (items) => {
-          setSupportByApp((prev) => ({ ...prev, [appId]: items }));
-        })
-      );
-    }
+
+    (async () => {
+      await ensureFirebaseAuth();
+      if (cancelled) return;
+      for (const appId of trackedAppIds) {
+        unsubs.push(
+          dafFirebaseService.subscribeAppFeedback(appId, (items) => {
+            setFeedbackByApp((prev) => ({ ...prev, [appId]: items }));
+          })
+        );
+        unsubs.push(
+          dafFirebaseService.subscribeAppSupport(appId, (items) => {
+            setSupportByApp((prev) => ({ ...prev, [appId]: items }));
+          })
+        );
+      }
+    })();
 
     return () => {
+      cancelled = true;
       unsubs.forEach((u) => u());
     };
   }, [host.isOnline, trackedAppIds]);
@@ -266,10 +302,16 @@ export const DigiSoliaAdminView: React.FC = () => {
       lastUpdatedAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),
     };
-    await dafFirebaseService.upsertRegisteredApp(appPayload, actor);
-    setNewAppId('');
-    setNewAppName('');
-    showTempNotice(`Application "${appPayload.name}" enregistrée dans Firestore.`);
+    try {
+      await dafFirebaseService.upsertRegisteredApp(appPayload, actor);
+      setNewAppId('');
+      setNewAppName('');
+      showTempNotice(`Application "${appPayload.name}" enregistrée dans Firestore.`);
+    } catch (err) {
+      showTempNotice(
+        err instanceof Error ? err.message : 'Erreur Firestore : authentification Super-Admin requise.'
+      );
+    }
   };
 
   const handleCreateAdmin = async (e: React.FormEvent) => {
@@ -288,10 +330,16 @@ export const DigiSoliaAdminView: React.FC = () => {
       active: true,
       createdAt: new Date().toISOString(),
     };
-    await dafFirebaseService.upsertAdministrator(newAdm, actor);
-    setNewAdminName('');
-    setNewAdminEmail('');
-    showTempNotice(`Administrateur ${newAdm.name} (${ADMIN_ROLE_LABELS[newAdm.role]}) ajouté.`);
+    try {
+      await dafFirebaseService.upsertAdministrator(newAdm, actor);
+      setNewAdminName('');
+      setNewAdminEmail('');
+      showTempNotice(`Administrateur ${newAdm.name} (${ADMIN_ROLE_LABELS[newAdm.role]}) ajouté.`);
+    } catch (err) {
+      showTempNotice(
+        err instanceof Error ? err.message : 'Erreur Firestore : authentification Super-Admin requise.'
+      );
+    }
   };
 
   const handlePublishNotification = async (e: React.FormEvent) => {
@@ -301,21 +349,46 @@ export const DigiSoliaAdminView: React.FC = () => {
       return;
     }
     if (!notifTitle.trim() || !notifMessage.trim()) return;
-    await dafFirebaseService.publishNotification(
-      {
-        appId: notifAppId as DigiSoliaAppId | 'all',
-        title: notifTitle.trim(),
-        message: notifMessage.trim(),
-        type: notifType,
-        targetAudience: 'all',
-        createdBy: actor.id,
-        createdByName: actor.name,
-      },
-      actor
-    );
-    setNotifTitle('');
-    setNotifMessage('');
-    showTempNotice('Notification diffusée aux utilisateurs.');
+    try {
+      await dafFirebaseService.publishNotification(
+        {
+          appId: notifAppId as DigiSoliaAppId | 'all',
+          title: notifTitle.trim(),
+          message: notifMessage.trim(),
+          type: notifType,
+          targetAudience: 'all',
+          createdBy: actor.id,
+          createdByName: actor.name,
+        },
+        actor
+      );
+      setNotifTitle('');
+      setNotifMessage('');
+      showTempNotice('Notification diffusée aux utilisateurs.');
+    } catch (err) {
+      showTempNotice(
+        err instanceof Error ? err.message : 'Erreur Firestore : authentification Super-Admin requise.'
+      );
+    }
+  };
+
+  const handleConnectGoogleAdmin = async () => {
+    setIsConnectingGoogle(true);
+    try {
+      const fbUser = await signInAdminWithGoogle();
+      if (fbUser.email) {
+        await dafFirebaseService
+          .bootstrapCurrentAuthAsSuperAdmin(fbUser.displayName || 'Super Admin', fbUser.email)
+          .catch(() => null);
+      }
+      showTempNotice(`Connecté en tant que ${fbUser.email || 'Administrateur Google'}.`);
+    } catch (err) {
+      showTempNotice(
+        err instanceof Error ? err.message : 'Connexion Google annulée ou bloquée par le navigateur.'
+      );
+    } finally {
+      setIsConnectingGoogle(false);
+    }
   };
 
   const navTabs: { id: AdminTabKey; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
@@ -388,6 +461,22 @@ export const DigiSoliaAdminView: React.FC = () => {
                 </option>
               ))}
             </select>
+
+            {isFirebaseAnonymous ? (
+              <button
+                type="button"
+                disabled={isConnectingGoogle}
+                onClick={handleConnectGoogleAdmin}
+                className="inline-flex items-center gap-2 bg-white text-[#163B65] hover:bg-sky-50 font-bold text-xs px-3.5 py-2.5 rounded-xl transition cursor-pointer whitespace-nowrap"
+              >
+                <LogIn className="h-3.5 w-3.5" />
+                <span>{isConnectingGoogle ? 'Connexion...' : 'Connexion Google Admin'}</span>
+              </button>
+            ) : (
+              <span className="text-xs font-semibold bg-emerald-500/20 text-emerald-100 border border-emerald-400/30 px-3 py-2 rounded-xl">
+                Auth : {firebaseAuthEmail}
+              </span>
+            )}
           </div>
         </div>
 

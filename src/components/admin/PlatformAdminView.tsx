@@ -323,13 +323,13 @@ export const PlatformAdminView: React.FC = () => {
       </div>
 
       {/* Navigation Sub-Tabs */}
-      <div className="flex items-center space-x-1 sm:space-x-2 border-b border-slate-200 overflow-x-auto pb-2 scrollbar-none">
+      <div className="flex items-center space-x-1 sm:space-x-2 border-b border-slate-200 dark:border-slate-800 overflow-x-auto pb-2 scrollbar-none">
         <button
           onClick={() => setActiveAdminTab('businesses')}
           className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition shrink-0 cursor-pointer ${
             activeAdminTab === 'businesses'
               ? 'bg-blue-600 text-white shadow-xs'
-              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
           }`}
         >
           <Building2 className="h-4 w-4" />
@@ -341,7 +341,7 @@ export const PlatformAdminView: React.FC = () => {
           className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition shrink-0 cursor-pointer ${
             activeAdminTab === 'digisolia'
               ? 'bg-[#163B65] text-white shadow-xs'
-              : 'text-[#163B65] bg-sky-50 hover:bg-sky-100 border border-sky-200'
+              : 'text-[#163B65] dark:text-sky-200 bg-sky-50 dark:bg-sky-950/60 hover:bg-sky-100 dark:hover:bg-sky-900/60 border border-sky-200 dark:border-sky-800'
           }`}
         >
           <Layers className="h-4 w-4" />
@@ -353,7 +353,7 @@ export const PlatformAdminView: React.FC = () => {
           className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition shrink-0 cursor-pointer ${
             activeAdminTab === 'overview'
               ? 'bg-blue-600 text-white shadow-xs'
-              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
           }`}
         >
           <Activity className="h-4 w-4" />
@@ -365,7 +365,7 @@ export const PlatformAdminView: React.FC = () => {
           className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition shrink-0 cursor-pointer ${
             activeAdminTab === 'users'
               ? 'bg-blue-600 text-white shadow-xs'
-              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
           }`}
         >
           <Users className="h-4 w-4" />
@@ -377,7 +377,7 @@ export const PlatformAdminView: React.FC = () => {
           className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition shrink-0 cursor-pointer ${
             activeAdminTab === 'store'
               ? 'bg-blue-600 text-white shadow-xs'
-              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
           }`}
         >
           <Settings className="h-4 w-4" />
@@ -389,7 +389,7 @@ export const PlatformAdminView: React.FC = () => {
           className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition shrink-0 cursor-pointer ${
             activeAdminTab === 'audit'
               ? 'bg-blue-600 text-white shadow-xs'
-              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
           }`}
         >
           <FileText className="h-4 w-4" />
@@ -401,7 +401,7 @@ export const PlatformAdminView: React.FC = () => {
           className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition shrink-0 cursor-pointer ${
             activeAdminTab === 'tools'
               ? 'bg-blue-600 text-white shadow-xs'
-              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
           }`}
         >
           <Database className="h-4 w-4" />

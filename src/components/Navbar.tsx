@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { 
   Store, 
@@ -54,6 +54,28 @@ export const Navbar: React.FC = () => {
   const [showUserDropdown, setShowUserDropdown] = useState(false);
   const [showNotifDropdown, setShowNotifDropdown] = useState(false);
   const { theme, toggleTheme } = useDigiSolia();
+  const headerRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (headerRef.current && !headerRef.current.contains(e.target as Node)) {
+        setShowUserDropdown(false);
+        setShowNotifDropdown(false);
+      }
+    };
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowUserDropdown(false);
+        setShowNotifDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleEsc);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleEsc);
+    };
+  }, []);
 
   const unreadNotifs = notifications.filter(n => !n.read);
 
@@ -73,7 +95,7 @@ export const Navbar: React.FC = () => {
   };
 
   return (
-    <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-40 shadow-xs">
+    <header ref={headerRef} className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-40 shadow-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
@@ -177,8 +199,11 @@ export const Navbar: React.FC = () => {
             <div className="relative">
               <button
                 id="btn-notifications"
-                onClick={() => setShowNotifDropdown(!showNotifDropdown)}
-                className="p-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 relative transition-colors focus:outline-none cursor-pointer"
+                onClick={() => {
+                  setShowUserDropdown(false);
+                  setShowNotifDropdown(!showNotifDropdown);
+                }}
+                className="p-2 rounded-lg text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 relative transition-colors focus:outline-none cursor-pointer"
                 aria-label="Notifications"
               >
                 <Bell className="h-5 w-5" />
@@ -191,9 +216,9 @@ export const Navbar: React.FC = () => {
 
               {/* Notifications Dropdown */}
               {showNotifDropdown && (
-                <div className="origin-top-right absolute right-0 mt-2 w-80 sm:w-96 max-w-[calc(100vw-1.5rem)] bg-white rounded-xl shadow-xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
-                  <div className="px-4 py-2 border-b border-slate-100 flex items-center justify-between">
-                    <span className="font-semibold text-slate-800 text-sm">Alertes & Notifications</span>
+                <div className="origin-top-right absolute right-0 mt-2 w-80 sm:w-96 max-w-[calc(100vw-1.5rem)] bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-800 py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                    <span className="font-semibold text-slate-800 dark:text-white text-sm">Alertes & Notifications</span>
                     {unreadNotifs.length > 0 && (
                       <button
                         onClick={clearAllNotifications}
@@ -203,9 +228,9 @@ export const Navbar: React.FC = () => {
                       </button>
                     )}
                   </div>
-                  <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
+                  <div className="max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
                     {notifications.length === 0 ? (
-                      <div className="p-6 text-center text-slate-500 text-xs">
+                      <div className="p-6 text-center text-slate-500 dark:text-slate-400 text-xs">
                         <CheckCircle2 className="h-8 w-8 text-emerald-500 mx-auto mb-2 opacity-80" />
                         Toutes les alertes sont à jour. Tout fonctionne normalement !
                       </div>
@@ -218,8 +243,8 @@ export const Navbar: React.FC = () => {
                             if (notif.linkTab) setActiveTab(notif.linkTab);
                             setShowNotifDropdown(false);
                           }}
-                          className={`p-3 text-xs cursor-pointer transition hover:bg-slate-50 flex items-start space-x-3 ${
-                            notif.read ? 'opacity-60 bg-white' : 'bg-slate-50/70 font-medium'
+                          className={`p-3 text-xs cursor-pointer transition hover:bg-slate-50 dark:hover:bg-slate-800/80 flex items-start space-x-3 ${
+                            notif.read ? 'opacity-65 bg-white dark:bg-slate-900' : 'bg-slate-50/70 dark:bg-slate-800/40 font-medium'
                           }`}
                         >
                           <div className="shrink-0 mt-0.5">
@@ -229,8 +254,8 @@ export const Navbar: React.FC = () => {
                             {notif.type === 'success' && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
                           </div>
                           <div className="flex-1">
-                            <p className="text-slate-900 font-semibold">{notif.title}</p>
-                            <p className="text-slate-600 mt-0.5">{notif.message}</p>
+                            <p className="text-slate-900 dark:text-white font-semibold">{notif.title}</p>
+                            <p className="text-slate-600 dark:text-slate-300 mt-0.5">{notif.message}</p>
                           </div>
                         </div>
                       ))
@@ -280,25 +305,28 @@ export const Navbar: React.FC = () => {
             <div className="relative">
               <button
                 id="btn-user-menu"
-                onClick={() => setShowUserDropdown(!showUserDropdown)}
-                className="flex items-center space-x-2 bg-slate-100 hover:bg-slate-200/80 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium text-slate-800 transition focus:outline-none cursor-pointer"
+                onClick={() => {
+                  setShowNotifDropdown(false);
+                  setShowUserDropdown(!showUserDropdown);
+                }}
+                className="flex items-center space-x-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200/80 dark:hover:bg-slate-700 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium text-slate-800 dark:text-slate-100 transition focus:outline-none cursor-pointer"
               >
-                <div className="h-6 w-6 rounded-full bg-slate-800 text-white flex items-center justify-center text-xs font-bold uppercase">
+                <div className="h-6 w-6 rounded-full bg-slate-800 dark:bg-blue-600 text-white flex items-center justify-center text-xs font-bold uppercase">
                   {currentUser.name.charAt(0)}
                 </div>
                 <div className="hidden md:flex flex-col text-left">
-                  <span className="font-semibold text-slate-900 leading-tight">{currentUser.name.split(' ')[0]}</span>
-                  <span className="text-[10px] text-slate-500 capitalize">{currentUser.role === 'owner' ? 'Propriétaire' : currentUser.role === 'manager' ? 'Gérant' : currentUser.role === 'cashier' ? 'Caissier' : 'Stock'}</span>
+                  <span className="font-semibold text-slate-900 dark:text-white leading-tight">{currentUser.name.split(' ')[0]}</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 capitalize">{currentUser.role === 'owner' ? 'Propriétaire' : currentUser.role === 'manager' ? 'Gérant' : currentUser.role === 'cashier' ? 'Caissier' : 'Stock'}</span>
                 </div>
                 <ChevronDown className="h-3.5 w-3.5 text-slate-500" />
               </button>
 
               {/* User Switcher Dropdown */}
               {showUserDropdown && (
-                <div className="origin-top-right absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
-                  <div className="px-3 py-2 border-b border-slate-100">
+                <div className="origin-top-right absolute right-0 mt-2 w-64 bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-800 py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800">
                     <p className="text-[11px] font-bold uppercase text-slate-400 tracking-wider">Changer de Profil</p>
-                    <p className="text-xs text-slate-600">Sélectionnez votre compte :</p>
+                    <p className="text-xs text-slate-600 dark:text-slate-400">Sélectionnez votre compte :</p>
                   </div>
                   <div className="p-1 space-y-1 max-h-60 overflow-y-auto">
                     {allUsers.map(user => (
@@ -309,7 +337,7 @@ export const Navbar: React.FC = () => {
                           setShowUserDropdown(false);
                         }}
                         className={`w-full text-left px-3 py-2 rounded-lg text-xs flex items-center justify-between transition cursor-pointer ${
-                          currentUser.id === user.id ? 'bg-blue-50 text-blue-950 font-semibold' : 'hover:bg-slate-50 text-slate-700'
+                          currentUser.id === user.id ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-950 dark:text-blue-200 font-semibold' : 'hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200'
                         }`}
                       >
                         <div className="flex items-center space-x-2">
@@ -320,7 +348,7 @@ export const Navbar: React.FC = () => {
                           </div>
                           <div>
                             <p className="font-medium">{user.name}</p>
-                            <p className="text-[10px] text-slate-400">{user.phone}</p>
+                            <p className="text-[10px] text-slate-400 dark:text-slate-400">{user.phone}</p>
                           </div>
                         </div>
                         {getRoleBadge(user.role)}
@@ -328,14 +356,14 @@ export const Navbar: React.FC = () => {
                     ))}
                   </div>
 
-                  <div className="border-t border-slate-100 mt-1 pt-1 px-1 space-y-1">
+                  <div className="border-t border-slate-100 dark:border-slate-800 mt-1 pt-1 px-1 space-y-1">
                     <button
                       type="button"
                       onClick={() => {
                         setShowUserDropdown(false);
                         setActiveTab('daf_profile');
                       }}
-                      className="w-full text-left px-3 py-2 rounded-lg text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2 font-semibold transition cursor-pointer"
+                      className="w-full text-left px-3 py-2 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 font-semibold transition cursor-pointer"
                     >
                       <User className="h-3.5 w-3.5 text-[#2783C7]" />
                       <span>Mon profil DigiSolia</span>
@@ -346,9 +374,9 @@ export const Navbar: React.FC = () => {
                         setShowUserDropdown(false);
                         setActiveTab('daf_support');
                       }}
-                      className="w-full text-left px-3 py-2 rounded-lg text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2 font-semibold transition cursor-pointer"
+                      className="w-full text-left px-3 py-2 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 font-semibold transition cursor-pointer"
                     >
-                      <Headphones className="h-3.5 w-3.5 text-[#163B65]" />
+                      <Headphones className="h-3.5 w-3.5 text-[#163B65] dark:text-[#2783C7]" />
                       <span>Centre d’assistance</span>
                     </button>
                     <button
@@ -357,9 +385,9 @@ export const Navbar: React.FC = () => {
                         setShowUserDropdown(false);
                         lockUserSession();
                       }}
-                      className="w-full text-left px-3 py-2 rounded-lg text-xs text-amber-700 hover:bg-amber-50 flex items-center gap-2 font-semibold transition cursor-pointer"
+                      className="w-full text-left px-3 py-2 rounded-lg text-xs text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 flex items-center gap-2 font-semibold transition cursor-pointer"
                     >
-                      <Lock className="h-3.5 w-3.5 text-amber-600" />
+                      <Lock className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
                       <span>Verrouiller l'écran</span>
                     </button>
                     <button
@@ -367,7 +395,7 @@ export const Navbar: React.FC = () => {
                         setShowUserDropdown(false);
                         logoutBusiness();
                       }}
-                      className="w-full text-left px-3 py-2 rounded-lg text-xs text-red-600 hover:bg-red-50 flex items-center gap-2 font-medium transition cursor-pointer"
+                      className="w-full text-left px-3 py-2 rounded-lg text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center gap-2 font-medium transition cursor-pointer"
                     >
                       <LogOut className="h-3.5 w-3.5" />
                       <span>Changer d'Entreprise</span>

@@ -987,9 +987,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let unsubscribeInvoices: (() => void) | undefined;
     let unsubscribeAvoirs: (() => void) | undefined;
 
+    let isDisposed = false;
+
     const setupFirestoreSync = async () => {
       try {
         setIsSyncing(true);
+        await ensureFirebaseAuth();
+        if (isDisposed) return;
 
         try {
           await getDocFromServer(doc(db, 'system', 'connection_test')).catch(() => null);
@@ -1200,6 +1204,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setupFirestoreSync();
 
     return () => {
+      isDisposed = true;
       unsubscribeBusinesses?.();
       unsubscribeProducts?.();
       unsubscribeSales?.();

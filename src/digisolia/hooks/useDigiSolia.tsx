@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { ensureFirebaseAuth } from '../../lib/firebase';
 import { DIGISOLIA_APP_CONFIG } from '../config/dafConfig';
-import { dafFirebaseService } from '../services/firebaseService';
+import { dafFirebaseService, testDafConnection } from '../services/firebaseService';
 import { offlineQueueService } from '../services/offlineQueueService';
 import {
   DigiSoliaAdminRole,
@@ -159,29 +160,47 @@ export const DigiSoliaProvider: React.FC<DigiSoliaProviderProps> = ({
   // Register app catalog & user directory presence non-destructively when online
   useEffect(() => {
     if (!adapter.isOnline) return;
-    dafFirebaseService.ensureAppCatalogRegistered(appId).catch(() => null);
-    dafFirebaseService.syncUserDirectoryProfile(mergedUser).catch(() => null);
+    let cancelled = false;
+    (async () => {
+      await testDafConnection();
+      if (cancelled) return;
+      await dafFirebaseService.ensureAppCatalogRegistered(appId).catch(() => null);
+      await dafFirebaseService.syncUserDirectoryProfile(mergedUser).catch(() => null);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [adapter.isOnline, appId, mergedUser.userId]);
 
-  // Subscribe to app-scoped feedback, support & notifications
+  // Subscribe to app-scoped feedback, support & notifications after auth is ready
   useEffect(() => {
     if (!adapter.isOnline) return;
-    const unsubFeedback = dafFirebaseService.subscribeAppFeedback(appId, (items) => {
-      setRemoteFeedback(items);
-      offlineQueueService.saveCache(appId, { feedback: items });
-    });
-    const unsubSupport = dafFirebaseService.subscribeAppSupport(appId, (items) => {
-      setRemoteSupport(items);
-      offlineQueueService.saveCache(appId, { support: items });
-    });
-    const unsubNotifs = dafFirebaseService.subscribeNotifications(appId, (items) => {
-      setNotifications(items);
-    });
+    let cancelled = false;
+    let unsubFeedback: (() => void) | undefined;
+    let unsubSupport: (() => void) | undefined;
+    let unsubNotifs: (() => void) | undefined;
+
+    (async () => {
+      await ensureFirebaseAuth();
+      if (cancelled) return;
+      unsubFeedback = dafFirebaseService.subscribeAppFeedback(appId, (items) => {
+        setRemoteFeedback(items);
+        offlineQueueService.saveCache(appId, { feedback: items });
+      });
+      unsubSupport = dafFirebaseService.subscribeAppSupport(appId, (items) => {
+        setRemoteSupport(items);
+        offlineQueueService.saveCache(appId, { support: items });
+      });
+      unsubNotifs = dafFirebaseService.subscribeNotifications(appId, (items) => {
+        setNotifications(items);
+      });
+    })();
 
     return () => {
-      unsubFeedback();
-      unsubSupport();
-      unsubNotifs();
+      cancelled = true;
+      unsubFeedback?.();
+      unsubSupport?.();
+      unsubNotifs?.();
     };
   }, [adapter.isOnline, appId]);
 

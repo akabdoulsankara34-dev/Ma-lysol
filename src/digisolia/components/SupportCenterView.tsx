@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   BookOpen,
@@ -25,6 +25,11 @@ export const SupportCenterView: React.FC = () => {
   const [message, setMessage] = useState('');
   const [userPhone, setUserPhone] = useState(user.phone || '');
   const [userEmail, setUserEmail] = useState(user.email || '');
+
+  useEffect(() => {
+    setUserPhone(user.phone || '');
+    setUserEmail(user.email || '');
+  }, [user.userId, user.phone, user.email]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedbackBanner, setFeedbackBanner] = useState<{
     type: 'success' | 'error';

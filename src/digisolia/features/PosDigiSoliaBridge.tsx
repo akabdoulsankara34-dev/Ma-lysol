@@ -72,20 +72,49 @@ export const PosDigiSoliaBridge: React.FC<PosDigiSoliaBridgeProps> = ({ children
           tabId: 'pos',
           accent: 'primary',
         },
-        {
-          id: 'sc-stock',
-          label: 'Gestion des Stocks',
-          description: 'Contrôler les seuils critiques et ajustements (+/-).',
-          tabId: 'stock',
-          accent: 'secondary',
-        },
-        {
-          id: 'sc-dashboard',
-          label: 'Tableau de Bord Métier',
-          description: 'Suivre le chiffre d’affaires, bénéfices et dépenses.',
-          tabId: 'dashboard',
-          accent: 'emerald',
-        },
+        ...(currentUser.role === 'owner' ||
+        currentUser.role === 'admin' ||
+        currentUser.role === 'manager' ||
+        currentUser.role === 'stock_manager'
+          ? [
+              {
+                id: 'sc-stock',
+                label: 'Gestion des Stocks',
+                description: 'Contrôler les seuils critiques et ajustements (+/-).',
+                tabId: 'stock',
+                accent: 'secondary' as const,
+              },
+            ]
+          : [
+              {
+                id: 'sc-cash',
+                label: 'Clôture Caisse (Z)',
+                description: 'Ouvrir, suivre et clôturer votre session de caisse.',
+                tabId: 'cash_register',
+                accent: 'secondary' as const,
+              },
+            ]),
+        ...(currentUser.role === 'owner' ||
+        currentUser.role === 'admin' ||
+        currentUser.role === 'manager'
+          ? [
+              {
+                id: 'sc-dashboard',
+                label: 'Tableau de Bord Métier',
+                description: 'Suivre le chiffre d’affaires, bénéfices et dépenses.',
+                tabId: 'dashboard',
+                accent: 'emerald' as const,
+              },
+            ]
+          : [
+              {
+                id: 'sc-products',
+                label: 'Catalogue Articles',
+                description: 'Consulter les articles, prix et codes-barres.',
+                tabId: 'products',
+                accent: 'emerald' as const,
+              },
+            ]),
         {
           id: 'sc-customers',
           label: 'Clients & Crédits',
