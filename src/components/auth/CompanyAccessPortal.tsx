@@ -3,25 +3,14 @@ import { useApp } from '../../context/AppContext';
 import { 
   Store, 
   KeyRound, 
-  ShieldCheck, 
   ArrowRight, 
-  Sparkles, 
-  Building2, 
-  MapPin, 
-  Phone, 
-  CheckCircle2, 
   AlertCircle,
-  Clock,
-  Zap,
-  Lock,
-  ChevronRight,
   RefreshCw
 } from 'lucide-react';
 
 export const CompanyAccessPortal: React.FC = () => {
   const { 
     authenticateBusiness, 
-    allBusinesses, 
     setShowAdminPinModal,
     isOnline
   } = useApp();
@@ -29,7 +18,6 @@ export const CompanyAccessPortal: React.FC = () => {
   const [accessCode, setAccessCode] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'enter_code' | 'demo_stores'>('enter_code');
   const [logoClickCount, setLogoClickCount] = useState(0);
 
   // Discreet admin trigger: 3 clicks on logo opens Admin PIN prompt
@@ -43,11 +31,6 @@ export const CompanyAccessPortal: React.FC = () => {
       setTimeout(() => setLogoClickCount(0), 3000);
     }
   };
-
-  // Filter ONLY Maëlys as the official demo boutique
-  const demoBusinesses = allBusinesses.filter(
-    b => b.id === 'biz_maelys' || b.accessCode === 'MAELYS' || b.isDemo === true
-  );
 
   const handleLogin = (codeToTest?: string) => {
     const code = (codeToTest || accessCode).trim().toUpperCase();
@@ -127,136 +110,64 @@ export const CompanyAccessPortal: React.FC = () => {
             </p>
           </div>
 
-          {/* Tab Selector: Saisie du Code vs Démonstration */}
-          <div className="flex bg-slate-950/60 p-1 rounded-xl border border-slate-800 mb-6">
+          {/* Saisie directe du code d'accès entreprise */}
+          <div className="space-y-5 relative z-10">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-2">
+                Code d'Accès Entreprise
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={accessCode}
+                  onChange={(e) => {
+                    setAccessCode(e.target.value.toUpperCase());
+                    if (errorMsg) setErrorMsg(null);
+                  }}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Saisissez votre code d'accès"
+                  className="w-full bg-slate-950/80 border border-slate-700 text-white text-base sm:text-lg font-mono font-bold px-4 py-3.5 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent uppercase tracking-wider placeholder:text-slate-600"
+                  autoFocus
+                />
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-mono">
+                  CODE UNIQUE
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1.5 flex items-center gap-1">
+                <span>💡</span> Entrez le code attribué à votre boutique pour charger votre catalogue et vos données.
+              </p>
+            </div>
+
+            {/* Error feedback */}
+            {errorMsg && (
+              <div className="p-3.5 rounded-2xl bg-red-950/60 border border-red-800/80 text-red-200 text-xs flex items-start gap-2.5 animate-in fade-in">
+                <AlertCircle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-bold">Code non reconnu</p>
+                  <p className="text-red-300 mt-0.5">{errorMsg}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Submit Button */}
             <button
-              onClick={() => { setActiveTab('enter_code'); setErrorMsg(null); }}
-              className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
-                activeTab === 'enter_code' 
-                  ? 'bg-blue-600 text-white shadow-xs' 
-                  : 'text-slate-400 hover:text-white'
-              }`}
+              onClick={() => handleLogin()}
+              disabled={isLoading || !accessCode.trim()}
+              className="w-full py-3.5 px-4 rounded-2xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-50 disabled:hover:bg-blue-600 text-white font-bold text-sm sm:text-base flex items-center justify-center gap-2 shadow-lg shadow-blue-600/30 transition cursor-pointer"
             >
-              <KeyRound className="h-3.5 w-3.5" />
-              <span>Saisir un Code</span>
-            </button>
-            <button
-              onClick={() => { setActiveTab('demo_stores'); setErrorMsg(null); }}
-              className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
-                activeTab === 'demo_stores' 
-                  ? 'bg-blue-600 text-white shadow-xs' 
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Building2 className="h-3.5 w-3.5" />
-              <span>Boutique Démo (Maëlys)</span>
+              {isLoading ? (
+                <>
+                  <RefreshCw className="h-5 w-5 animate-spin" />
+                  <span>Vérification de l'accès...</span>
+                </>
+              ) : (
+                <>
+                  <span>Accéder à ma Boutique</span>
+                  <ArrowRight className="h-5 w-5" />
+                </>
+              )}
             </button>
           </div>
-
-          {/* Mode 1: Saisie directe du code d'accès entreprise */}
-          {activeTab === 'enter_code' && (
-            <div className="space-y-5">
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-2">
-                  Code d'Accès Entreprise
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={accessCode}
-                    onChange={(e) => {
-                      setAccessCode(e.target.value.toUpperCase());
-                      if (errorMsg) setErrorMsg(null);
-                    }}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Saisissez votre code (Ex: MAELYS)"
-                    className="w-full bg-slate-950/80 border border-slate-700 text-white text-base sm:text-lg font-mono font-bold px-4 py-3.5 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent uppercase tracking-wider placeholder:text-slate-600"
-                    autoFocus
-                  />
-                  <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-mono">
-                    CODE UNIQUE
-                  </div>
-                </div>
-                <p className="text-[11px] text-slate-400 mt-1.5 flex items-center gap-1">
-                  <span>💡</span> Entrez le code attribué à votre boutique pour charger votre catalogue et vos données.
-                </p>
-              </div>
-
-              {/* Error feedback */}
-              {errorMsg && (
-                <div className="p-3.5 rounded-2xl bg-red-950/60 border border-red-800/80 text-red-200 text-xs flex items-start gap-2.5 animate-in fade-in">
-                  <AlertCircle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
-                  <div className="flex-1">
-                    <p className="font-bold">Code non reconnu</p>
-                    <p className="text-red-300 mt-0.5">{errorMsg}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Submit Button */}
-              <button
-                onClick={() => handleLogin()}
-                disabled={isLoading || !accessCode.trim()}
-                className="w-full py-3.5 px-4 rounded-2xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-50 disabled:hover:bg-blue-600 text-white font-bold text-sm sm:text-base flex items-center justify-center gap-2 shadow-lg shadow-blue-600/30 transition cursor-pointer"
-              >
-                {isLoading ? (
-                  <>
-                    <RefreshCw className="h-5 w-5 animate-spin" />
-                    <span>Vérification de l'accès...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Accéder à ma Boutique</span>
-                    <ArrowRight className="h-5 w-5" />
-                  </>
-                )}
-              </button>
-            </div>
-          )}
-
-          {/* Mode 2: Démonstration officielle (Uniquement Maëlys) */}
-          {activeTab === 'demo_stores' && (
-            <div className="space-y-3">
-              <p className="text-xs text-slate-400 mb-2">
-                Découvrez les fonctionnalités complètes avec la boutique de démonstration officielle :
-              </p>
-              {demoBusinesses.map((biz) => (
-                <div
-                  key={biz.id}
-                  onClick={() => handleLogin(biz.accessCode)}
-                  className="p-4 rounded-2xl bg-slate-950/70 hover:bg-slate-800/80 border border-blue-500/30 hover:border-blue-500 cursor-pointer transition flex items-center justify-between group"
-                >
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-white text-base group-hover:text-blue-400 transition">
-                        {biz.name}
-                      </span>
-                      <span className="text-[10px] font-mono font-black bg-blue-600 text-white px-2 py-0.5 rounded-md">
-                        {biz.accessCode}
-                      </span>
-                      <span className="text-[10px] uppercase font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2 py-0.5 rounded-md">
-                        Démo Officielle
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3 text-xs text-slate-400">
-                      <span className="flex items-center gap-1">
-                        <MapPin className="h-3.5 w-3.5 text-slate-500" />
-                        {biz.city}
-                      </span>
-                      <span>•</span>
-                      <span>Propriétaire : {biz.ownerName || 'sankara eric'}</span>
-                    </div>
-                    <p className="text-[11px] text-slate-500 pt-0.5">
-                      Catalogue prêt, gestion de caisse, stocks, alertes péremption et programme fidélité.
-                    </p>
-                  </div>
-                  <div className="h-9 w-9 rounded-xl bg-blue-600/20 group-hover:bg-blue-600 text-blue-400 group-hover:text-white flex items-center justify-center transition shrink-0">
-                    <ChevronRight className="h-5 w-5" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
 
           {/* Clean Footer Notice */}
           <div className="mt-6 pt-5 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
